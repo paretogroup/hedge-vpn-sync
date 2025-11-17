@@ -7,24 +7,31 @@ REMOTE_SERVER="10.5.0.8"
 REMOTE_SHARE="//$REMOTE_SERVER/dados/pareto"
 MOUNT_POINT="/mnt/pareto"
 
+# Detect if running as root - if so, don't use sudo
+if [ "$EUID" -eq 0 ]; then
+    SUDO=""
+else
+    SUDO="sudo"
+fi
+
 cleanup() {
     echo ""
     echo "--- Stopping ---"
     
     if mountpoint -q "$MOUNT_POINT"; then
         echo "Unmounting $MOUNT_POINT..."
-        sudo umount "$MOUNT_POINT" 2>/dev/null
+        $SUDO umount "$MOUNT_POINT" 2>/dev/null
     fi
 
-    if sudo test -f "$VPN_PID"; then
-        PID=$(sudo cat "$VPN_PID")
+    if $SUDO test -f "$VPN_PID"; then
+        PID=$($SUDO cat "$VPN_PID")
         if [ -n "$PID" ]; then
             echo "Stopping OpenVPN (PID $PID)..."
-            sudo kill "$PID" 2>/dev/null
+            $SUDO kill "$PID" 2>/dev/null
         fi
-        sudo rm -f "$VPN_PID"
+        $SUDO rm -f "$VPN_PID"
     else
-        sudo killall openvpn 2>/dev/null
+        $SUDO killall openvpn 2>/dev/null
     fi
     
     echo "Connections closed."
@@ -33,18 +40,18 @@ cleanup() {
 
 trap cleanup SIGINT EXIT
 
-if ! sudo test -f "$VPN_CONFIG"; then
+if ! $SUDO test -f "$VPN_CONFIG"; then
     echo "Critical Error: $VPN_CONFIG not found."
     exit 1
 fi
 
-if ! sudo test -f "$SMB_CREDS"; then
+if ! $SUDO test -f "$SMB_CREDS"; then
     echo "Critical Error: $SMB_CREDS not found."
     exit 1
 fi
 
 echo "--- Connecting ---"
-sudo openvpn --config "$VPN_CONFIG" --daemon --writepid "$VPN_PID"
+$SUDO openvpn --config "$VPN_CONFIG" --daemon --writepid "$VPN_PID"
 
 echo "Waiting for tunnel establishment..."
 CONNECTED=false
@@ -63,14 +70,14 @@ if [ "$CONNECTED" = false ]; then
 fi
 
 echo "Mounting network unit..."
-sudo mkdir -p "$MOUNT_POINT"
+$SUDO mkdir -p "$MOUNT_POINT"
 
 CURRENT_UID=$(id -u)
 CURRENT_GID=$(id -g)
 
 OPTS="credentials=$SMB_CREDS,iocharset=utf8,file_mode=0777,dir_mode=0777,uid=$CURRENT_UID,gid=$CURRENT_GID"
 
-if sudo mount -t cifs "$REMOTE_SHARE" "$MOUNT_POINT" -o "$OPTS"; then
+if $SUDO mount -t cifs "$REMOTE_SHARE" "$MOUNT_POINT" -o "$OPTS"; then
     echo "Network unit mounted successfully at $MOUNT_POINT."
 else
     echo "Error mounting the SMB share."
@@ -82,3 +89,4 @@ echo "System ready. Press Ctrl+C to disconnect and unmount."
 while true; do
     sleep 1
 done
+

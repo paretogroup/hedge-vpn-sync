@@ -5,6 +5,7 @@ services:
       dockerfile: Dockerfile
     container_name: hedge-vpn-sync
     image: hedge-vpn-sync:latest
+    privileged: true
     volumes:
       # Mount VPN directory (adjust path as needed)
       - ${VPN_BASE_PATH:-/mnt/pareto}:/mnt/pareto:ro

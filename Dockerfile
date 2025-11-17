@@ -7,6 +7,11 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
+    openvpn \
+    cifs-utils \
+    iputils-ping \
+    net-tools \
+    sudo \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
@@ -18,8 +23,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Make main.py executable
-RUN chmod +x main.py
+# Make scripts executable
+RUN chmod +x main.py && \
+    chmod +x scripts/*.sh 2>/dev/null || true
 
 # Default command
 CMD ["python", "main.py"]
