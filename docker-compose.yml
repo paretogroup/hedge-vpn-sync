@@ -1,0 +1,44 @@
+services:
+  vpn-sync:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: hedge-vpn-sync
+    image: hedge-vpn-sync:latest
+    volumes:
+      # Mount VPN directory (adjust path as needed)
+      - ${VPN_BASE_PATH:-/mnt/pareto}:/mnt/pareto:ro
+    environment:
+      # VPN Configuration
+      - VPN_BASE_PATH=${VPN_BASE_PATH:-/mnt/pareto}
+      
+      # Google Cloud Platform
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      - GCS_BUCKET_NAME=${GCS_BUCKET_NAME}
+      - GCS_TEMP_BUCKET=${GCS_TEMP_BUCKET}
+      
+      # BigQuery
+      - BIGQUERY_DATASET_ID=${BIGQUERY_DATASET_ID}
+      - BIGQUERY_TABLE_ID=${BIGQUERY_TABLE_ID}
+      - BIGQUERY_LOG_TABLE_ID=${BIGQUERY_LOG_TABLE_ID}
+      
+      # Synchronization settings
+      - SYNC_BATCH_SIZE=${SYNC_BATCH_SIZE:-100}
+      - SYNC_USE_JSONL_THRESHOLD=${SYNC_USE_JSONL_THRESHOLD:-1000}
+      - SYNC_TIME_TOLERANCE_SECONDS=${SYNC_TIME_TOLERANCE_SECONDS:-1.0}
+      - SYNC_PROGRESS_INTERVAL=${SYNC_PROGRESS_INTERVAL:-100}
+      
+      # Upload settings
+      - UPLOAD_RETRY_ATTEMPTS=${UPLOAD_RETRY_ATTEMPTS:-3}
+      - UPLOAD_RETRY_DELAY=${UPLOAD_RETRY_DELAY:-1.0}
+      
+      # Google Cloud credentials
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS}
+    restart: unless-stopped
+    networks:
+      - vpn-sync-network
+
+networks:
+  vpn-sync-network:
+    driver: bridge
+

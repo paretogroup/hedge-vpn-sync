@@ -1,0 +1,118 @@
+name: Deploy Hedge VPN Sync to GCE
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: pareto-engine-n8n
+  VM_NAME: hedge-vpn-sync-vm
+  VM_ZONE: us-central1-a
+  REPO_URL: https://github.com/paretogroup/hedge-vpn-sync.git
+
+jobs:
+  deploy:
+    name: Deploy to GCE
+    environment: production
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+      - name: 'Set up Cloud SDK'
+        uses: google-github-actions/auth@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: 'Deploy to VM'
+        run: |
+          # Execute deployment directly on VM
+          gcloud compute ssh ${{ env.VM_NAME }} \
+            --zone=${{ env.VM_ZONE }} \
+            --command="
+              export GH_PAT='${{ secrets.GH_PAT }}'
+              export REPO_URL='${{ env.REPO_URL }}'
+              export COMMIT_SHA='${{ github.sha }}'
+              
+              sudo mkdir -p /opt/hedge-vpn-sync
+              cd /opt/hedge-vpn-sync
+              
+              git config --global credential.helper store
+              git config --global url.'https://'\$GH_PAT'@github.com/'.insteadOf 'https://github.com/'
+              git config --global --list | grep credential || echo 'No credential config found'
+              git config --global --list | grep url || echo 'No URL rewrite config found'
+              
+              if [ -d '.git' ]; then
+                git branch -v
+                git log --oneline -1
+                git remote -v
+                
+                CURRENT_URL=\$(git remote get-url origin)
+                if [[ \$CURRENT_URL == git@github.com:* ]]; then
+                  git remote set-url origin \$REPO_URL
+                  git remote -v
+                fi
+                
+                git fetch origin
+                git checkout master
+                git reset --hard origin/master
+                git clean -fd
+                git branch -v
+                git log --oneline -1
+              else
+                git clone \$REPO_URL .
+                cd /opt/hedge-vpn-sync
+                git checkout master
+                git remote -v
+              fi
+              
+              sudo chown -R \$USER:\$USER /opt/hedge-vpn-sync
+              
+              docker compose down --timeout 30 || true
+              docker compose build --no-cache
+              docker compose up -d
+              
+              sleep 10
+              if docker compose ps | grep -q 'Up'; then
+                echo 'Deployment successful!'
+                docker compose ps
+              else
+                echo 'Deployment failed!'
+                docker compose logs --tail=50
+                exit 1
+              fi
+              
+              echo 'Activating network (VPN mount)...'
+              if [ -f /opt/hedge-vpn-sync/vpn_mount.sh ]; then
+                chmod +x /opt/hedge-vpn-sync/vpn_mount.sh
+                if ! pgrep -f 'vpn_mount.sh' > /dev/null; then
+                  nohup /opt/hedge-vpn-sync/vpn_mount.sh > /var/log/vpn_mount.log 2>&1 &
+                  echo 'VPN mount script started in background'
+                  sleep 5
+                  if pgrep -f 'vpn_mount.sh' > /dev/null; then
+                    echo 'Network activated successfully!'
+                  else
+                    echo 'Warning: VPN mount script may have failed. Check /var/log/vpn_mount.log'
+                  fi
+                else
+                  echo 'VPN mount script is already running'
+                fi
+              else
+                echo 'Warning: vpn_mount.sh not found in /opt/hedge-vpn-sync/'
+              fi
+              
+              echo 'Setting up cron job for main.py...'
+              CRON_CMD='0 * * * * cd /opt/hedge-vpn-sync && docker compose run --rm vpn-sync python main.py >> /var/log/vpn-sync-cron.log 2>&1'
+              TEMP_CRON=\$(mktemp)
+              crontab -l 2>/dev/null | grep -v 'vpn-sync.*main.py' > \"\$TEMP_CRON\" || true
+              echo \"\$CRON_CMD\" >> \"\$TEMP_CRON\"
+              crontab \"\$TEMP_CRON\"
+              rm \"\$TEMP_CRON\"
+              echo 'Cron job configured successfully!'
+              crontab -l | grep 'vpn-sync.*main.py' || echo 'Warning: Cron job may not have been added correctly'
+            "
+
