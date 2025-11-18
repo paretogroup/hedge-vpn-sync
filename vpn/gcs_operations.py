@@ -93,7 +93,7 @@ class GCSUploader:
         file_entries: Iterable[dict],
         base_path: str,
         progress_interval: int = None
-    ) -> tuple[int, int]:
+    ) -> tuple[int, int, list[str]]:
         """
         Upload multiple files to GCS.
         
@@ -103,13 +103,14 @@ class GCSUploader:
             progress_interval: Progress log interval (uses Config if None)
             
         Returns:
-            Tuple (successes, failures)
+            Tuple (successes, failures, successful_paths) where successful_paths is a list of relative paths
         """
         progress_interval = progress_interval or Config.SYNC_PROGRESS_INTERVAL
         file_list = list(file_entries)
         total = len(file_list)
         successes = 0
         failures = 0
+        successful_paths = []
         
         logger.info(f"Starting upload of {total} files to gs://{self.bucket_name}")
         
@@ -119,6 +120,7 @@ class GCSUploader:
             
             if self.upload_file(file_path, relative_path):
                 successes += 1
+                successful_paths.append(relative_path)
             else:
                 failures += 1
             
@@ -126,7 +128,7 @@ class GCSUploader:
                 logger.info(f"Progress: {idx}/{total} files processed ({successes} successes, {failures} failures)")
         
         logger.info(f"Upload completed: {successes} successes, {failures} failures of {total} files")
-        return successes, failures
+        return successes, failures, successful_paths
     
     def delete_file(self, gcs_blob_path: str) -> bool:
         """
@@ -185,3 +187,36 @@ class GCSUploader:
         
         logger.info(f"Deletion completed: {successes} successes, {failures} failures of {total} files")
         return successes, failures
+    
+    def list_files(self) -> set[str]:
+        """
+        List all files in the GCS bucket.
+        
+        Returns:
+            Set of relative file paths (blob names)
+        """
+        try:
+            blobs = self.client.list_blobs(self.bucket_name)
+            file_paths = {blob.name for blob in blobs}
+            logger.info(f"Found {len(file_paths)} files in GCS bucket")
+            return file_paths
+        except GoogleCloudError as e:
+            logger.error(f"Error listing files from GCS: {e}")
+            raise
+    
+    def file_exists(self, gcs_blob_path: str) -> bool:
+        """
+        Check if a file exists in GCS.
+        
+        Args:
+            gcs_blob_path: GCS blob path
+            
+        Returns:
+            True if the file exists, False otherwise
+        """
+        try:
+            blob = self.bucket.blob(gcs_blob_path)
+            return blob.exists()
+        except GoogleCloudError as e:
+            logger.error(f"Error checking file existence in GCS {gcs_blob_path}: {e}")
+            return False

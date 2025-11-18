@@ -114,9 +114,27 @@ class VPNSynchronizer:
             
             logger.info(f"Files in BigQuery: {len(bq_data)}")
             
-            # Identify differences
-            vpn_paths = set(vpn_data.keys())
+            # Verify consistency between GCS and BigQuery
+            logger.info("Verifying consistency between GCS and BigQuery...")
+            gcs_files = self.gcs_uploader.list_files()
+            gcs_paths = set(gcs_files)
             bq_paths = set(bq_data.keys())
+            
+            # Identify inconsistencies between GCS and BigQuery
+            gcs_only = gcs_paths - bq_paths  # Files in GCS but not in BQ
+            bq_only = bq_paths - gcs_paths   # Files in BQ but not in GCS
+            
+            if gcs_only or bq_only:
+                logger.warning("=" * 60)
+                logger.warning("⚠ INCONSISTENCIES DETECTED BETWEEN GCS AND BIGQUERY")
+                logger.warning("=" * 60)
+                logger.warning(f"Files in GCS but not in BQ: {len(gcs_only)}")
+                logger.warning(f"Files in BQ but not in GCS: {len(bq_only)}")
+                logger.warning("These will be reconciled during synchronization")
+                logger.warning("=" * 60)
+            
+            # Identify differences between VPN and BigQuery
+            vpn_paths = set(vpn_data.keys())
             
             # (A) Files in the VPN that are not in BigQuery
             to_add = vpn_paths - bq_paths
@@ -130,6 +148,31 @@ class VPNSynchronizer:
                 path for path in common_paths
                 if vpn_data[path] != bq_data[path]
             ]
+            
+            # (D) Reconciliation: Files in GCS but not in BQ
+            # - If in VPN: add to BQ (will be handled by to_add)
+            # - If not in VPN: delete from GCS (orphaned)
+            gcs_orphans = gcs_only - vpn_paths  # In GCS but not in VPN or BQ
+            if gcs_orphans:
+                logger.info(f"Found {len(gcs_orphans)} orphaned files in GCS (not in VPN or BQ)")
+                to_delete.extend(gcs_orphans)
+            
+            # Files in GCS and VPN but not in BQ will be handled by to_add (already calculated)
+            gcs_in_vpn_not_bq = gcs_only & vpn_paths
+            if gcs_in_vpn_not_bq:
+                logger.info(f"Found {len(gcs_in_vpn_not_bq)} files in GCS and VPN but not in BQ (will be added to BQ)")
+            
+            # (E) Reconciliation: Files in BQ but not in GCS
+            # - If in VPN: re-upload to GCS (add to to_update)
+            # - If not in VPN: delete from BQ (already in to_delete)
+            bq_missing_gcs = bq_only & vpn_paths  # In BQ and VPN but not in GCS
+            if bq_missing_gcs:
+                logger.info(f"Found {len(bq_missing_gcs)} files in BQ and VPN but missing from GCS (will be re-uploaded)")
+                to_update.extend(bq_missing_gcs)  # Re-upload to GCS
+            
+            # Remove duplicates from to_delete and to_update
+            to_delete = list(set(to_delete))
+            to_update = list(set(to_update))
             
             # Summary
             logger.info("=" * 60)
@@ -164,22 +207,33 @@ class VPNSynchronizer:
                     "message": "No changes necessary"
                 }
             
-            # Execute operations
+            # Execute operations in optimized order for consistency
+            
+            # (B) Delete files first (cleanup before adding/updating)
+            # This ensures we don't have orphaned data
+            if len(to_delete) > 0:
+                logger.info(f"Deleting {len(to_delete)} files...")
+                delete_success = self._delete_files(to_delete)
+                if not delete_success:
+                    logger.warning("Some deletions failed, but continuing with other operations...")
             
             # (A) Add new files
             if len(to_add) > 0:
                 logger.info(f"Adding {len(to_add)} files...")
-                self._add_files(to_add, vpn_data, vpn_file_map)
-            
-            # (B) Delete files that are not in the VPN anymore
-            if len(to_delete) > 0:
-                logger.info(f"Deleting {len(to_delete)} files...")
-                self._delete_files(to_delete)
+                add_success = self._add_files(to_add, vpn_data, vpn_file_map)
+                if not add_success:
+                    logger.warning("Some additions failed, but continuing with other operations...")
             
             # (C) Update files with different dates
             if len(to_update) > 0:
                 logger.info(f"Updating {len(to_update)} files...")
-                self._update_files(to_update, vpn_data, vpn_file_map)
+                update_success = self._update_files(to_update, vpn_data, vpn_file_map)
+                if not update_success:
+                    logger.warning("Some updates failed, but continuing with other operations...")
+            
+            # Final consistency check
+            logger.info("Performing final consistency verification...")
+            self._verify_final_consistency(vpn_data, vpn_paths)
             
             logger.info("=" * 60)
             logger.info("✓ Synchronization completed successfully!")
@@ -217,8 +271,16 @@ class VPNSynchronizer:
             "error_message": error_message
         }
     
-    def _add_files(self, to_add: set, vpn_data: dict, vpn_file_map: dict):
-        """Add new files to BigQuery and GCS."""
+    def _add_files(self, to_add: list, vpn_data: dict, vpn_file_map: dict) -> bool:
+        """
+        Add new files to BigQuery and GCS.
+        
+        Returns:
+            True if all operations succeeded, False otherwise
+        """
+        if not to_add:
+            return True
+        
         # Send files to GCS first
         file_entries = [
             {
@@ -227,40 +289,80 @@ class VPNSynchronizer:
             }
             for path in to_add
         ]
-        successes, failures = self.gcs_uploader.upload_files(
+        successes, failures, successful_gcs_paths = self.gcs_uploader.upload_files(
             file_entries,
             self.base_path,
             progress_interval=Config.SYNC_PROGRESS_INTERVAL
         )
         
+        # Track which files were successfully uploaded (match by relative path)
+        successfully_uploaded = []
+        successful_gcs_paths_set = set(successful_gcs_paths)
+        for path in to_add:
+            relative_path = get_relative_path(vpn_file_map[path], self.base_path)
+            if relative_path in successful_gcs_paths_set:
+                successfully_uploaded.append(path)
+        
         if failures > 0:
             logger.warning(f"⚠ {failures} files failed to upload to GCS")
+            # Only add to BQ files that were successfully uploaded to GCS
+            if not successfully_uploaded:
+                logger.error("No files were successfully uploaded to GCS, skipping BQ insertion")
+                return False
         
-        # Prepare data for insertion in BigQuery
+        # Prepare data for insertion in BigQuery (only successfully uploaded files)
         add_data = [
             {
                 "file_path": path,
                 "updated_at": vpn_data[path]
             }
-            for path in to_add
+            for path in successfully_uploaded
         ]
         
-        # Always use JSONL via temporary bucket
-        self.bq_manager.insert_files(
-            add_data,
-            self.dataset_id,
-            self.table_id,
-            use_jsonl=True,
-            temp_bucket=Config.GCS_TEMP_BUCKET
-        )
-        
-        logger.info(f"✓ {len(to_add)} files added")
+        try:
+            # Always use JSONL via temporary bucket
+            self.bq_manager.insert_files(
+                add_data,
+                self.dataset_id,
+                self.table_id,
+                use_jsonl=True,
+                temp_bucket=Config.GCS_TEMP_BUCKET
+            )
+            
+            if len(successfully_uploaded) == len(to_add):
+                logger.info(f"✓ {len(to_add)} files added successfully")
+                return True
+            else:
+                logger.warning(
+                    f"⚠ {len(successfully_uploaded)}/{len(to_add)} files added "
+                    f"({len(to_add) - len(successfully_uploaded)} failed in GCS)"
+                )
+                return False
+        except Exception as e:
+            logger.error(f"Error inserting files into BigQuery: {e}")
+            # Files are in GCS but not in BQ - this will be reconciled in next sync
+            return False
     
-    def _delete_files(self, to_delete: set):
-        """Delete files from BigQuery and GCS."""
-        delete_list = list(to_delete)
+    def _delete_files(self, to_delete: list) -> bool:
+        """
+        Delete files from BigQuery and GCS.
         
-        # Delete from GCS first
+        Returns:
+            True if all operations succeeded, False otherwise
+        """
+        if not to_delete:
+            return True
+        
+        delete_list = list(set(to_delete))  # Remove duplicates
+        
+        # Delete from BigQuery first (safer - metadata before data)
+        try:
+            self.bq_manager.delete_files(delete_list, self.dataset_id, self.table_id)
+        except Exception as e:
+            logger.error(f"Error deleting files from BigQuery: {e}")
+            # Continue with GCS deletion even if BQ fails
+        
+        # Delete from GCS
         successes, failures = self.gcs_uploader.delete_files(
             delete_list,
             progress_interval=Config.SYNC_PROGRESS_INTERVAL
@@ -268,15 +370,31 @@ class VPNSynchronizer:
         
         if failures > 0:
             logger.warning(f"⚠ {failures} files failed to delete from GCS")
+            # Files deleted from BQ but not from GCS - will be reconciled in next sync
         
-        # Delete corresponding rows from BigQuery
-        self.bq_manager.delete_files(delete_list, self.dataset_id, self.table_id)
-        
-        logger.info(f"✓ {len(to_delete)} files deleted")
+        if successes == len(delete_list):
+            logger.info(f"✓ {len(delete_list)} files deleted successfully")
+            return True
+        else:
+            logger.warning(
+                f"⚠ {successes}/{len(delete_list)} files deleted from GCS "
+                f"({len(delete_list) - successes} failed)"
+            )
+            return False
     
-    def _update_files(self, to_update: list, vpn_data: dict, vpn_file_map: dict):
-        """Update files in BigQuery and re-send to GCS."""
-        # Re-send updated files to GCS before touching BigQuery
+    def _update_files(self, to_update: list, vpn_data: dict, vpn_file_map: dict) -> bool:
+        """
+        Update files in BigQuery and re-send to GCS.
+        
+        Returns:
+            True if all operations succeeded, False otherwise
+        """
+        if not to_update:
+            return True
+        
+        to_update = list(set(to_update))  # Remove duplicates
+        
+        # Re-send updated files to GCS
         file_entries = [
             {
                 "file_path": vpn_file_map[path],
@@ -284,22 +402,94 @@ class VPNSynchronizer:
             }
             for path in to_update
         ]
-        successes, failures = self.gcs_uploader.upload_files(
+        successes, failures, successful_gcs_paths = self.gcs_uploader.upload_files(
             file_entries,
             self.base_path,
             progress_interval=Config.SYNC_PROGRESS_INTERVAL
         )
         
+        # Track which files were successfully uploaded (match by relative path)
+        successfully_uploaded = []
+        successful_gcs_paths_set = set(successful_gcs_paths)
+        for path in to_update:
+            relative_path = get_relative_path(vpn_file_map[path], self.base_path)
+            if relative_path in successful_gcs_paths_set:
+                successfully_uploaded.append(path)
+        
         if failures > 0:
             logger.warning(f"⚠ {failures} files failed to re-upload to GCS")
         
-        # Apply updates in BigQuery via temp table + merge
-        file_updates = {path: vpn_data[path] for path in to_update}
-        self.bq_manager.update_files(
-            file_updates,
-            self.dataset_id,
-            self.table_id,
-            temp_bucket=Config.GCS_TEMP_BUCKET
-        )
+        # Apply updates in BigQuery via temp table + merge (only for successfully uploaded)
+        if successfully_uploaded:
+            file_updates = {path: vpn_data[path] for path in successfully_uploaded}
+            try:
+                self.bq_manager.update_files(
+                    file_updates,
+                    self.dataset_id,
+                    self.table_id,
+                    temp_bucket=Config.GCS_TEMP_BUCKET
+                )
+            except Exception as e:
+                logger.error(f"Error updating files in BigQuery: {e}")
+                return False
         
-        logger.info(f"✓ {len(to_update)} files updated")
+        if len(successfully_uploaded) == len(to_update):
+            logger.info(f"✓ {len(to_update)} files updated successfully")
+            return True
+        else:
+            logger.warning(
+                f"⚠ {len(successfully_uploaded)}/{len(to_update)} files updated "
+                f"({len(to_update) - len(successfully_uploaded)} failed in GCS)"
+            )
+            return False
+    
+    def _verify_final_consistency(self, vpn_data: dict, vpn_paths: set):
+        """
+        Perform a final consistency check between VPN, GCS, and BigQuery.
+        
+        Args:
+            vpn_data: Dictionary of VPN file paths and timestamps
+            vpn_paths: Set of VPN file paths
+        """
+        try:
+            # Re-read BQ data
+            bq_df = self.bq_manager.get_table_data(self.dataset_id, self.table_id)
+            bq_paths = set(bq_df['file_path'].tolist()) if not bq_df.empty else set()
+            
+            # Re-read GCS data
+            gcs_paths = self.gcs_uploader.list_files()
+            
+            # Check consistency
+            inconsistencies = []
+            
+            # Files in BQ but not in GCS
+            bq_not_in_gcs = bq_paths - gcs_paths
+            if bq_not_in_gcs:
+                inconsistencies.append(f"{len(bq_not_in_gcs)} files in BQ but not in GCS")
+            
+            # Files in GCS but not in BQ
+            gcs_not_in_bq = gcs_paths - bq_paths
+            if gcs_not_in_bq:
+                inconsistencies.append(f"{len(gcs_not_in_bq)} files in GCS but not in BQ")
+            
+            # Files in VPN but not in BQ or GCS
+            vpn_not_in_bq = vpn_paths - bq_paths
+            vpn_not_in_gcs = vpn_paths - gcs_paths
+            if vpn_not_in_bq:
+                inconsistencies.append(f"{len(vpn_not_in_bq)} files in VPN but not in BQ")
+            if vpn_not_in_gcs:
+                inconsistencies.append(f"{len(vpn_not_in_gcs)} files in VPN but not in GCS")
+            
+            if inconsistencies:
+                logger.warning("=" * 60)
+                logger.warning("⚠ FINAL CONSISTENCY CHECK - INCONSISTENCIES FOUND")
+                logger.warning("=" * 60)
+                for issue in inconsistencies:
+                    logger.warning(f"  - {issue}")
+                logger.warning("These will be resolved in the next synchronization")
+                logger.warning("=" * 60)
+            else:
+                logger.info("✓ Final consistency check passed: VPN, GCS, and BigQuery are synchronized")
+        except Exception as e:
+            logger.warning(f"Could not perform final consistency check: {e}")
+            # Don't fail the sync if verification fails
