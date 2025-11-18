@@ -9,6 +9,12 @@ services:
     volumes:
       # Mount VPN directory (adjust path as needed)
       - ${VPN_BASE_PATH:-/mnt/pareto}:/mnt/pareto:ro
+      # Mount OpenVPN config so scripts/vpn_mount.sh can read client.conf
+      - ${HOST_OPENVPN_DIR:-/etc/openvpn}:/etc/openvpn:ro
+      # Mount SMB credentials file required by vpn_mount.sh
+      - ${HOST_SMB_CREDENTIALS_FILE:-/root/.smbcredentials}:/root/.smbcredentials:ro
+      # Mount Google Cloud credentials file
+      - ${HOST_GCP_CREDENTIALS_FILE:-./credentials.json}:/app/credentials.json:ro
     environment:
       # VPN Configuration
       - VPN_BASE_PATH=${VPN_BASE_PATH:-/mnt/pareto}
@@ -34,7 +40,7 @@ services:
       - UPLOAD_RETRY_DELAY=${UPLOAD_RETRY_DELAY:-1.0}
       
       # Google Cloud credentials
-      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS}
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-/app/credentials.json}
     restart: unless-stopped
     networks:
       - vpn-sync-network

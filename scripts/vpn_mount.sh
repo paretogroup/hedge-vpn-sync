@@ -51,7 +51,12 @@ if ! $SUDO test -f "$SMB_CREDS"; then
 fi
 
 echo "--- Connecting ---"
-$SUDO openvpn --config "$VPN_CONFIG" --daemon --writepid "$VPN_PID"
+# Add AES-128-CBC to data-ciphers to support the server's cipher
+# Ignore block-outside-dns option (Windows-specific, not supported in OpenVPN 2.6.14)
+$SUDO openvpn --config "$VPN_CONFIG" \
+    --data-ciphers "AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305:AES-128-CBC" \
+    --ignore-unknown-option block-outside-dns \
+    --daemon --writepid "$VPN_PID"
 
 echo "Waiting for tunnel establishment..."
 CONNECTED=false
