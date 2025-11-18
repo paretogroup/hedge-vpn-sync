@@ -129,7 +129,7 @@ info "Configuring permissions..."
 chown -R "$SUDO_USER:$SUDO_USER" /opt/hedge-vpn-sync 2>/dev/null || true
 
 # Check if the VPN configuration files exist
-info "Verificando configurações da VPN..."
+info "Checking VPN configuration files..."
 VPN_CONFIG="/etc/openvpn/client/client.conf"
 SMB_CREDS="/root/.smbcredentials"
 
