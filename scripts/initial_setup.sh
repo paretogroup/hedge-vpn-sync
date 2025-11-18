@@ -31,9 +31,6 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-info "Updating package list..."
-apt-get update -qq
-
 info "Installing basic dependencies..."
 apt-get install -y \
     curl \
@@ -52,18 +49,43 @@ info "Installing Docker..."
 # Remove old versions if they exist
 apt-get remove -y docker docker-engine docker.io containerd runc 2>/dev/null || true
 
+# Remove old Docker repository configuration if it exists
+if [ -f /etc/apt/sources.list.d/docker.list ]; then
+    info "Removing old Docker repository configuration..."
+    rm -f /etc/apt/sources.list.d/docker.list
+fi
+
+# Detect distribution (Ubuntu or Debian)
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    DISTRO_ID="$ID"
+    DISTRO_CODENAME="$VERSION_CODENAME"
+else
+    error "Cannot detect distribution. /etc/os-release not found."
+    exit 1
+fi
+
+# Validate distribution
+if [ "$DISTRO_ID" != "ubuntu" ] && [ "$DISTRO_ID" != "debian" ]; then
+    error "Unsupported distribution: $DISTRO_ID. This script supports Ubuntu and Debian only."
+    exit 1
+fi
+
+info "Detected distribution: $DISTRO_ID $DISTRO_CODENAME"
+
 # Add Docker repository
 install -m 0755 -d /etc/apt/keyrings
 if [ ! -f /etc/apt/keyrings/docker.gpg ]; then
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    curl -fsSL https://download.docker.com/linux/$DISTRO_ID/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
     chmod a+r /etc/apt/keyrings/docker.gpg
 fi
 
 echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$DISTRO_ID \
+  $DISTRO_CODENAME stable" | \
   tee /etc/apt/sources.list.d/docker.list > /dev/null
 
+info "Updating package list..."
 apt-get update -qq
 apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin > /dev/null
 
