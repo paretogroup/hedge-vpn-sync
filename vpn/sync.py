@@ -5,12 +5,12 @@ import logging
 import traceback
 from datetime import datetime
 from typing import Optional
-import pandas as pd
 
 from .config import Config
-from .file_scanner import scan_files, get_relative_path, prepare_file_entries
+from .file_scanner import scan_files
 from .gcs_operations import GCSUploader
 from .bigquery_operations import BigQueryManager
+from .utils import normalize_timestamp, get_relative_path
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +98,7 @@ class VPNSynchronizer:
             for entry in vpn_files:
                 file_path = entry["file_path"]
                 relative_path = get_relative_path(file_path, self.base_path)
-                updated_at = pd.to_datetime(entry["updated_at"], format='ISO8601').tz_localize(None)
+                updated_at = normalize_timestamp(entry["updated_at"])
                 vpn_data[relative_path] = updated_at
                 vpn_file_map[relative_path] = file_path
             
@@ -107,7 +107,10 @@ class VPNSynchronizer:
             # Read data from BigQuery
             logger.info("Reading data from BigQuery...")
             bq_df = self.bq_manager.get_table_data(self.dataset_id, self.table_id)
-            bq_data = dict(zip(bq_df['file_path'], pd.to_datetime(bq_df['updated_at'])))
+            bq_data = {}
+            if not bq_df.empty:
+                for _, row in bq_df.iterrows():
+                    bq_data[row['file_path']] = normalize_timestamp(row['updated_at'])
             
             logger.info(f"Files in BigQuery: {len(bq_data)}")
             
@@ -121,11 +124,11 @@ class VPNSynchronizer:
             # (B) Files in BigQuery that are not in the VPN
             to_delete = bq_paths - vpn_paths
             
-            # (C) Files in both but with different dates
+            # (C) Files in both but with different timestamps (comparação exata)
             common_paths = vpn_paths & bq_paths
             to_update = [
                 path for path in common_paths
-                if abs((vpn_data[path] - bq_data[path]).total_seconds()) >= Config.SYNC_TIME_TOLERANCE_SECONDS
+                if vpn_data[path] != bq_data[path]
             ]
             
             # Summary
@@ -216,28 +219,12 @@ class VPNSynchronizer:
     
     def _add_files(self, to_add: set, vpn_data: dict, vpn_file_map: dict):
         """Add new files to BigQuery and GCS."""
-        # Prepare data for insertion
-        add_data = [
-            {
-                "file_path": path,
-                "updated_at": vpn_data[path]
-            }
-            for path in to_add
-        ]
-        
-        # Insert into BigQuery
-        use_jsonl = len(add_data) >= Config.SYNC_USE_JSONL_THRESHOLD
-        self.bq_manager.insert_files(
-            add_data,
-            self.dataset_id,
-            self.table_id,
-            use_jsonl=use_jsonl,
-            temp_bucket=Config.GCS_TEMP_BUCKET
-        )
-        
-        # Send files to GCS
+        # Send files to GCS first
         file_entries = [
-            {"file_path": vpn_file_map[path], "updated_at": vpn_data[path].isoformat()}
+            {
+                "file_path": vpn_file_map[path],
+                "updated_at": vpn_data[path].isoformat(timespec='seconds')
+            }
             for path in to_add
         ]
         successes, failures = self.gcs_uploader.upload_files(
@@ -249,16 +236,31 @@ class VPNSynchronizer:
         if failures > 0:
             logger.warning(f"⚠ {failures} files failed to upload to GCS")
         
+        # Prepare data for insertion in BigQuery
+        add_data = [
+            {
+                "file_path": path,
+                "updated_at": vpn_data[path]
+            }
+            for path in to_add
+        ]
+        
+        # Always use JSONL via temporary bucket
+        self.bq_manager.insert_files(
+            add_data,
+            self.dataset_id,
+            self.table_id,
+            use_jsonl=True,
+            temp_bucket=Config.GCS_TEMP_BUCKET
+        )
+        
         logger.info(f"✓ {len(to_add)} files added")
     
     def _delete_files(self, to_delete: set):
         """Delete files from BigQuery and GCS."""
         delete_list = list(to_delete)
         
-        # Delete from BigQuery
-        self.bq_manager.delete_files(delete_list, self.dataset_id, self.table_id)
-        
-        # Delete from GCS
+        # Delete from GCS first
         successes, failures = self.gcs_uploader.delete_files(
             delete_list,
             progress_interval=Config.SYNC_PROGRESS_INTERVAL
@@ -267,19 +269,19 @@ class VPNSynchronizer:
         if failures > 0:
             logger.warning(f"⚠ {failures} files failed to delete from GCS")
         
+        # Delete corresponding rows from BigQuery
+        self.bq_manager.delete_files(delete_list, self.dataset_id, self.table_id)
+        
         logger.info(f"✓ {len(to_delete)} files deleted")
     
     def _update_files(self, to_update: list, vpn_data: dict, vpn_file_map: dict):
         """Update files in BigQuery and re-send to GCS."""
-        # Prepare updates
-        file_updates = {path: vpn_data[path] for path in to_update}
-        
-        # Update in BigQuery
-        self.bq_manager.update_files(file_updates, self.dataset_id, self.table_id)
-        
-        # Re-send updated files to GCS
+        # Re-send updated files to GCS before touching BigQuery
         file_entries = [
-            {"file_path": vpn_file_map[path], "updated_at": vpn_data[path].isoformat()}
+            {
+                "file_path": vpn_file_map[path],
+                "updated_at": vpn_data[path].isoformat(timespec='seconds')
+            }
             for path in to_update
         ]
         successes, failures = self.gcs_uploader.upload_files(
@@ -290,5 +292,14 @@ class VPNSynchronizer:
         
         if failures > 0:
             logger.warning(f"⚠ {failures} files failed to re-upload to GCS")
+        
+        # Apply updates in BigQuery via temp table + merge
+        file_updates = {path: vpn_data[path] for path in to_update}
+        self.bq_manager.update_files(
+            file_updates,
+            self.dataset_id,
+            self.table_id,
+            temp_bucket=Config.GCS_TEMP_BUCKET
+        )
         
         logger.info(f"✓ {len(to_update)} files updated")

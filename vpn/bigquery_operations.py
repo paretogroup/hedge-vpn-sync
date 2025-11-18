@@ -12,6 +12,7 @@ from google.cloud.bigquery import LoadJobConfig, WriteDisposition, SourceFormat
 from google.cloud.exceptions import GoogleCloudError
 
 from .config import Config
+from .utils import normalize_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +75,7 @@ class BigQueryManager:
             table_id: ID of the table to be created/overwritten
             base_path: Base path to calculate the relative path
         """
-        from .file_scanner import get_relative_path
+        from .utils import get_relative_path
         
         logger.info(f"Creating/overwriting table {self.project_id}.{dataset_id}.{table_id}...")
         
@@ -91,8 +92,11 @@ class BigQueryManager:
         # Create DataFrame
         df = pd.DataFrame(data)
         
-        # Convert updated_at to datetime
-        df["updated_at"] = pd.to_datetime(df["updated_at"], format='ISO8601').dt.tz_localize(None)
+        # Convert updated_at to datetime without sub-seconds
+        if not df.empty:
+            df["updated_at"] = pd.to_datetime(
+                df["updated_at"].apply(normalize_timestamp)
+            )
         
         # Configure load job
         job_config = LoadJobConfig(
@@ -150,9 +154,10 @@ class BigQueryManager:
             
             df = pd.DataFrame(data)
             
-            # Convert updated_at to datetime if necessary
-            if df['updated_at'].dtype == 'object':
-                df['updated_at'] = pd.to_datetime(df['updated_at'])
+            if not df.empty:
+                df['updated_at'] = pd.to_datetime(
+                    df['updated_at'].apply(normalize_timestamp)
+                )
             
             logger.info(f"✓ {len(df)} rows read from BigQuery")
             return df
@@ -198,7 +203,10 @@ class BigQueryManager:
     def _insert_via_dataframe(self, file_data: list[dict], table_ref: bigquery.TableReference):
         """Insert data via DataFrame."""
         df = pd.DataFrame(file_data)
-        df["updated_at"] = pd.to_datetime(df["updated_at"], format='ISO8601').dt.tz_localize(None)
+        if not df.empty:
+            df["updated_at"] = pd.to_datetime(
+                df["updated_at"].apply(normalize_timestamp)
+            )
         
         job_config = LoadJobConfig(
             schema=self.get_table_schema(),
@@ -213,7 +221,8 @@ class BigQueryManager:
         self,
         file_data: list[dict],
         table_ref: bigquery.TableReference,
-        temp_bucket: str
+        temp_bucket: str,
+        write_disposition: WriteDisposition = WriteDisposition.WRITE_APPEND
     ):
         """Insert data via JSONL in GCS."""
         import json
@@ -222,12 +231,9 @@ class BigQueryManager:
         # Create temporary JSONL file
         with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False) as f:
             for row in file_data:
-                updated_at = row["updated_at"]
-                if isinstance(updated_at, datetime):
-                    updated_at = updated_at.isoformat()
                 f.write(json.dumps({
                     "file_path": row["file_path"],
-                    "updated_at": updated_at
+                    "updated_at": normalize_timestamp(value)(row["updated_at"])
                 }) + "\n")
             temp_file = f.name
         
@@ -243,7 +249,7 @@ class BigQueryManager:
             job_config = LoadJobConfig(
                 schema=self.get_table_schema(),
                 source_format=SourceFormat.NEWLINE_DELIMITED_JSON,
-                write_disposition=WriteDisposition.WRITE_APPEND,
+                write_disposition=write_disposition,
             )
             
             uri = f"gs://{temp_bucket}/{blob_name}"
@@ -308,59 +314,66 @@ class BigQueryManager:
         self,
         file_updates: dict[str, datetime],
         dataset_id: str,
-        table_id: str
+        table_id: str,
+        temp_bucket: Optional[str] = None
     ):
         """
-        Update the modification dates of the files in BigQuery.
+        Update the modification dates of the files in BigQuery via temporary table + merge.
         
         Args:
             file_updates: Dictionary mapping file_path -> new updated_at
             dataset_id: ID of the dataset in BigQuery
             table_id: ID of the table
+            temp_bucket: Temporary bucket for JSONL uploads (uses Config if None)
         """
         if not file_updates:
             logger.info("No files to update")
             return
         
-        # Process in batches
-        batch_size = Config.SYNC_BATCH_SIZE
-        file_list = list(file_updates.items())
-        total_batches = (len(file_list) + batch_size - 1) // batch_size
+        temp_bucket = temp_bucket or Config.GCS_TEMP_BUCKET
+        file_data = [
+            {
+                "file_path": path,
+                "updated_at": normalize_timestamp(updated_at)
+            }
+            for path, updated_at in file_updates.items()
+        ]
         
-        logger.info(f"Updating {len(file_updates)} files in BigQuery in {total_batches} batches...")
+        temp_table_id = f"{table_id}_updates_tmp_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+        temp_table_ref = self.client.dataset(dataset_id).table(temp_table_id)
         
-        for i in range(0, len(file_list), batch_size):
-            batch = file_list[i:i+batch_size]
-            batch_num = (i // batch_size) + 1
-            
-            # Build UPDATE query
-            update_cases = []
-            for path, new_date in batch:
-                new_date_str = new_date.strftime("%Y-%m-%d %H:%M:%S")
-                escaped_path = path.replace("'", "''")
-                update_cases.append(f"WHEN '{escaped_path}' THEN DATETIME '{new_date_str}'")
-            
-            cases_str = "\n    ".join(update_cases)
-            paths_escaped = [path.replace("'", "''") for path, _ in batch]
-            paths_str = "', '".join(paths_escaped)
-            
-            query = f"""
-            UPDATE `{self.project_id}.{dataset_id}.{table_id}`
-            SET updated_at = CASE file_path
-                {cases_str}
-            END
-            WHERE file_path IN ('{paths_str}')
-            """
-            
+        logger.info(
+            f"Updating {len(file_updates)} files in BigQuery via temporary table {temp_table_id}..."
+        )
+        
+        self._insert_via_jsonl(
+            file_data,
+            temp_table_ref,
+            temp_bucket,
+            write_disposition=WriteDisposition.WRITE_TRUNCATE
+        )
+        
+        merge_query = f"""
+        MERGE `{self.project_id}.{dataset_id}.{table_id}` T
+        USING `{self.project_id}.{dataset_id}.{temp_table_id}` S
+        ON T.file_path = S.file_path
+        WHEN MATCHED THEN
+          UPDATE SET updated_at = S.updated_at
+        """
+        
+        try:
+            job = self.client.query(merge_query)
+            job.result()
+            logger.info(f"✓ {len(file_updates)} files updated in BigQuery via merge")
+        except GoogleCloudError as e:
+            logger.error(f"Error merging updates from {temp_table_id}: {e}")
+            raise
+        finally:
             try:
-                job = self.client.query(query)
-                job.result()
-                logger.debug(f"Batch {batch_num}/{total_batches}: {len(batch)} files updated")
-            except GoogleCloudError as e:
-                logger.error(f"Error updating batch {batch_num}: {e}")
-                raise
-        
-        logger.info(f"✓ {len(file_updates)} files updated in BigQuery")
+                self.client.delete_table(temp_table_ref, not_found_ok=True)
+                logger.debug(f"Temporary table deleted: {temp_table_id}")
+            except Exception as cleanup_error:
+                logger.warning(f"Error deleting temporary table {temp_table_id}: {cleanup_error}")
     
     def log_sync(
         self,

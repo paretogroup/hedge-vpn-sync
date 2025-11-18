@@ -29,7 +29,6 @@ class Config:
     # Synchronization settings
     SYNC_BATCH_SIZE: int = int(os.getenv("SYNC_BATCH_SIZE"))
     SYNC_USE_JSONL_THRESHOLD: int = int(os.getenv("SYNC_USE_JSONL_THRESHOLD"))
-    SYNC_TIME_TOLERANCE_SECONDS: float = float(os.getenv("SYNC_TIME_TOLERANCE_SECONDS"))
     SYNC_PROGRESS_INTERVAL: int = int(os.getenv("SYNC_PROGRESS_INTERVAL"))
     
     # Upload settings
