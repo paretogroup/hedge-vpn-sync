@@ -231,9 +231,10 @@ class BigQueryManager:
         # Create temporary JSONL file
         with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False) as f:
             for row in file_data:
+                normalized_dt = normalize_timestamp(row["updated_at"])
                 f.write(json.dumps({
                     "file_path": row["file_path"],
-                    "updated_at": normalize_timestamp(value)(row["updated_at"])
+                    "updated_at": normalized_dt.isoformat(timespec='seconds')
                 }) + "\n")
             temp_file = f.name
         
