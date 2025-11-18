@@ -3,7 +3,7 @@ name: Deploy Hedge VPN Sync to GCE
 on:
   push:
     branches:
-      - main
+      - master
   workflow_dispatch:
 
 env:
@@ -87,10 +87,10 @@ jobs:
               fi
               
               echo 'Activating network (VPN mount)...'
-              if [ -f /opt/hedge-vpn-sync/vpn_mount.sh ]; then
-                chmod +x /opt/hedge-vpn-sync/vpn_mount.sh
+              if [ -f /opt/hedge-vpn-sync/scripts/vpn_mount.sh ]; then
+                chmod +x /opt/hedge-vpn-sync/scripts/vpn_mount.sh
                 if ! pgrep -f 'vpn_mount.sh' > /dev/null; then
-                  nohup /opt/hedge-vpn-sync/vpn_mount.sh > /var/log/vpn_mount.log 2>&1 &
+                  nohup sudo /opt/hedge-vpn-sync/scripts/vpn_mount.sh > /var/log/vpn_mount.log 2>&1 &
                   echo 'VPN mount script started in background'
                   sleep 5
                   if pgrep -f 'vpn_mount.sh' > /dev/null; then
@@ -102,17 +102,38 @@ jobs:
                   echo 'VPN mount script is already running'
                 fi
               else
-                echo 'Warning: vpn_mount.sh not found in /opt/hedge-vpn-sync/'
+                echo 'Warning: vpn_mount.sh not found in /opt/hedge-vpn-sync/scripts/'
               fi
               
-              echo 'Setting up cron job for main.py...'
-              CRON_CMD='0 * * * * cd /opt/hedge-vpn-sync && docker compose run --rm vpn-sync python main.py >> /var/log/vpn-sync-cron.log 2>&1'
-              TEMP_CRON=\$(mktemp)
-              crontab -l 2>/dev/null | grep -v 'vpn-sync.*main.py' > \"\$TEMP_CRON\" || true
-              echo \"\$CRON_CMD\" >> \"\$TEMP_CRON\"
-              crontab \"\$TEMP_CRON\"
-              rm \"\$TEMP_CRON\"
-              echo 'Cron job configured successfully!'
-              crontab -l | grep 'vpn-sync.*main.py' || echo 'Warning: Cron job may not have been added correctly'
+              echo 'Setting up cron jobs...'
+              
+              # Cron job para verificar e reiniciar vpn_mount.sh se necessário (no crontab do root)
+              VPN_MOUNT_CRON='*/5 * * * * if ! pgrep -f vpn_mount.sh > /dev/null; then nohup /opt/hedge-vpn-sync/scripts/vpn_mount.sh > /var/log/vpn_mount.log 2>&1 & fi'
+              
+              # Configurar cron job do vpn_mount.sh no crontab do root
+              TEMP_ROOT_CRON=\$(mktemp)
+              sudo crontab -l 2>/dev/null | grep -v 'vpn_mount.sh' > \"\$TEMP_ROOT_CRON\" || true
+              echo \"\$VPN_MOUNT_CRON\" >> \"\$TEMP_ROOT_CRON\"
+              sudo crontab \"\$TEMP_ROOT_CRON\"
+              rm \"\$TEMP_ROOT_CRON\"
+              echo 'VPN mount monitor cron job configured (runs every 5 minutes as root)'
+              
+              # Cron job para main.py (executa a cada hora no crontab do usuário)
+              MAIN_CRON='0 * * * * cd /opt/hedge-vpn-sync && docker compose run --rm vpn-sync python main.py >> /var/log/vpn-sync-cron.log 2>&1'
+              
+              # Configurar cron job do main.py no crontab do usuário
+              TEMP_USER_CRON=\$(mktemp)
+              crontab -l 2>/dev/null | grep -v 'vpn-sync.*main.py' > \"\$TEMP_USER_CRON\" || true
+              echo \"\$MAIN_CRON\" >> \"\$TEMP_USER_CRON\"
+              crontab \"\$TEMP_USER_CRON\"
+              rm \"\$TEMP_USER_CRON\"
+              echo 'Main sync cron job configured (runs every hour)'
+              
+              echo 'All cron jobs configured successfully!'
+              echo 'Verifying cron jobs...'
+              echo 'Root crontab (vpn_mount.sh):'
+              sudo crontab -l | grep 'vpn_mount' || echo '  (none found)'
+              echo 'User crontab (main.py):'
+              crontab -l | grep 'vpn-sync.*main.py' || echo '  (none found)'
             "
 
