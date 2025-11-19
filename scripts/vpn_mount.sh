@@ -38,7 +38,7 @@ cleanup() {
     exit
 }
 
-trap cleanup SIGINT EXIT
+trap cleanup SIGINT SIGTERM
 
 if ! $SUDO test -f "$VPN_CONFIG"; then
     echo "Critical Error: $VPN_CONFIG not found."
@@ -91,7 +91,25 @@ fi
 
 echo "System ready. Press Ctrl+C to disconnect and unmount."
 
-while true; do
-    sleep 1
-done
+# If running in background (no TTY), only keep the process alive
+# Checking periodically if the mount is still active
+if [ ! -t 0 ]; then
+    echo "Running in background mode. Monitoring mount status..."
+    while true; do
+        if ! mountpoint -q "$MOUNT_POINT"; then
+            echo "Warning: Mount point lost. Exiting to allow restart..."
+            exit 1
+        fi
+        if ! ping -c 1 -W 1 "$REMOTE_SERVER" &> /dev/null; then
+            echo "Warning: VPN connection lost. Exiting to allow restart..."
+            exit 1
+        fi
+        sleep 30
+    done
+else
+    # Interactive mode: simple loop
+    while true; do
+        sleep 1
+    done
+fi
 
