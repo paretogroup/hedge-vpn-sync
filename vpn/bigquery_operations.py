@@ -59,66 +59,6 @@ class BigQueryManager:
             bigquery.SchemaField("error_message", "STRING", mode="NULLABLE"),
         ]
     
-    def create_or_overwrite_table(
-        self,
-        file_entries: list[dict],
-        dataset_id: str,
-        table_id: str,
-        base_path: str
-    ):
-        """
-        Create or overwrite a table in BigQuery with the file data.
-        
-        Args:
-            file_entries: List of dictionaries with 'file_path' and 'updated_at'
-            dataset_id: ID of the dataset in BigQuery
-            table_id: ID of the table to be created/overwritten
-            base_path: Base path to calculate the relative path
-        """
-        from .utils import get_relative_path
-        
-        logger.info(f"Creating/overwriting table {self.project_id}.{dataset_id}.{table_id}...")
-        
-        # Prepare data for DataFrame
-        data = []
-        for entry in file_entries:
-            file_path = entry["file_path"]
-            relative_path = get_relative_path(file_path, base_path)
-            data.append({
-                "file_path": relative_path,
-                "updated_at": entry["updated_at"]
-            })
-        
-        # Create DataFrame
-        df = pd.DataFrame(data)
-        
-        # Convert updated_at to datetime without sub-seconds
-        if not df.empty:
-            df["updated_at"] = pd.to_datetime(
-                df["updated_at"].apply(normalize_timestamp)
-            )
-        
-        # Configure load job
-        job_config = LoadJobConfig(
-            schema=self.get_table_schema(),
-            write_disposition=WriteDisposition.WRITE_TRUNCATE,
-            source_format=SourceFormat.PARQUET,
-        )
-        
-        # Create table reference
-        table_ref = self.client.dataset(dataset_id).table(table_id)
-        
-        # Upload
-        job = self.client.load_table_from_dataframe(df, table_ref, job_config=job_config)
-        job.result()  # Wait for completion
-        
-        # Verify result
-        table = self.client.get_table(table_ref)
-        logger.info(
-            f"✓ Table created/updated: {table.num_rows} rows, "
-            f"{table.num_bytes / 1024 / 1024:.2f} MB"
-        )
-    
     def get_table_data(
         self,
         dataset_id: str,

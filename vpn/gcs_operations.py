@@ -203,20 +203,3 @@ class GCSUploader:
         except GoogleCloudError as e:
             logger.error(f"Error listing files from GCS: {e}")
             raise
-    
-    def file_exists(self, gcs_blob_path: str) -> bool:
-        """
-        Check if a file exists in GCS.
-        
-        Args:
-            gcs_blob_path: GCS blob path
-            
-        Returns:
-            True if the file exists, False otherwise
-        """
-        try:
-            blob = self.bucket.blob(gcs_blob_path)
-            return blob.exists()
-        except GoogleCloudError as e:
-            logger.error(f"Error checking file existence in GCS {gcs_blob_path}: {e}")
-            return False

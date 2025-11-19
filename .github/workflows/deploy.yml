@@ -33,121 +33,77 @@ jobs:
           gcloud compute ssh ${{ env.VM_NAME }} \
             --zone=${{ env.VM_ZONE }} \
             --command="
+              set -euo pipefail
+
               export GH_PAT='${{ secrets.GH_PAT }}'
               export REPO_URL='${{ env.REPO_URL }}'
-              export COMMIT_SHA='${{ github.sha }}'
-              
-              sudo mkdir -p /opt/hedge-vpn-sync
-              sudo chown -R \$USER:\$USER /opt/hedge-vpn-sync
-              cd /opt/hedge-vpn-sync
-              
+
+              WORKDIR=/opt/hedge-vpn-sync
+
+              sudo mkdir -p \"\$WORKDIR\"
+              sudo chown -R \$USER:\$USER \"\$WORKDIR\"
+
               git config --global credential.helper store
-              git config --global url.'https://'\$GH_PAT'@github.com/'.insteadOf 'https://github.com/'
-              git config --global --list | grep credential || echo 'No credential config found'
-              git config --global --list | grep url || echo 'No URL rewrite config found'
-              
-              if [ -d '.git' ]; then
-                echo 'Repository exists, updating...'
-                git branch -v || true
-                git log --oneline -1 || true
-                git remote -v || true
-                
-                CURRENT_URL=\$(git remote get-url origin 2>/dev/null || echo '')
-                if [[ \$CURRENT_URL == git@github.com:* ]]; then
-                  git remote set-url origin \$REPO_URL
-                  git remote -v
+              git config --global url.\"https://\"\$GH_PAT\"@github.com/\".insteadOf 'https://github.com/'
+
+              if [ -d \"\$WORKDIR/.git\" ]; then
+                cd \"\$WORKDIR\"
+                if git remote get-url origin >/dev/null 2>&1; then
+                  git remote set-url origin \"\$REPO_URL\"
                 fi
-                
-                git fetch origin || echo 'Fetch failed, trying to reset...'
+                git fetch origin
                 git checkout master || git checkout -b master
-                git reset --hard origin/master || echo 'Reset failed'
-                git clean -fd || true
-                git branch -v || true
-                git log --oneline -1 || true
+                git reset --hard origin/master
+                git clean -fd
               else
-                echo 'Repository does not exist, cloning...'
-                git clone \$REPO_URL . || { echo 'Clone failed!'; exit 1; }
-                cd /opt/hedge-vpn-sync
-                git checkout master || echo 'Checkout master failed'
-                git remote -v
+                git clone \"\$REPO_URL\" \"\$WORKDIR\"
+                cd \"\$WORKDIR\"
+                git checkout master || true
               fi
-              
-              sudo chown -R \$USER:\$USER /opt/hedge-vpn-sync
-              
-              cd /opt/hedge-vpn-sync
-              pwd
-              ls -la
-              
+
               if [ ! -f 'docker-compose.yml' ]; then
                 echo 'ERROR: docker-compose.yml not found in /opt/hedge-vpn-sync'
                 exit 1
               fi
-              
-              echo 'Stopping existing containers...'
+
               docker compose down --timeout 30 || true
-              
-              echo 'Building containers...'
-              docker compose build --no-cache || { echo 'Build failed!'; exit 1; }
-              
-              echo 'Starting containers...'
-              docker compose up -d || { echo 'Start failed!'; exit 1; }
-              
+              docker compose build --pull
+              docker compose up -d
+
               sleep 10
-              if docker compose ps | grep -q 'Up'; then
-                echo 'Deployment successful!'
-                docker compose ps
-              else
-                echo 'Deployment failed!'
+              if ! docker compose ps | grep -q 'Up'; then
                 docker compose ps
                 docker compose logs --tail=50
                 exit 1
               fi
-              
-              echo 'Activating network (VPN mount)...'
-              if [ -f /opt/hedge-vpn-sync/scripts/vpn_mount.sh ]; then
-                chmod +x /opt/hedge-vpn-sync/scripts/vpn_mount.sh
+
+              if [ -f \"\$WORKDIR/scripts/vpn_mount.sh\" ]; then
+                chmod +x \"\$WORKDIR/scripts/vpn_mount.sh\"
                 if ! pgrep -f 'vpn_mount.sh' > /dev/null; then
-                  nohup sudo /opt/hedge-vpn-sync/scripts/vpn_mount.sh > /var/log/vpn_mount.log 2>&1 &
-                  echo 'VPN mount script started in background'
+                  nohup sudo \"\$WORKDIR/scripts/vpn_mount.sh\" > /var/log/vpn_mount.log 2>&1 &
                   sleep 5
-                  if pgrep -f 'vpn_mount.sh' > /dev/null; then
-                    echo 'Network activated successfully!'
-                  else
+                  if ! pgrep -f 'vpn_mount.sh' > /dev/null; then
                     echo 'Warning: VPN mount script may have failed. Check /var/log/vpn_mount.log'
                   fi
-                else
-                  echo 'VPN mount script is already running'
                 fi
               else
-                echo 'Warning: vpn_mount.sh not found in /opt/hedge-vpn-sync/scripts/'
+                echo \"Warning: vpn_mount.sh not found in \$WORKDIR/scripts/\"
               fi
-              
-              echo 'Setting up cron jobs...'
-              
+
               VPN_MOUNT_CRON='*/5 * * * * if ! pgrep -f vpn_mount.sh > /dev/null; then nohup /opt/hedge-vpn-sync/scripts/vpn_mount.sh > /var/log/vpn_mount.log 2>&1 & fi'
-              
+
               TEMP_ROOT_CRON=\$(mktemp)
               sudo crontab -l 2>/dev/null | grep -v 'vpn_mount.sh' > \"\$TEMP_ROOT_CRON\" || true
               echo \"\$VPN_MOUNT_CRON\" >> \"\$TEMP_ROOT_CRON\"
               sudo crontab \"\$TEMP_ROOT_CRON\"
               rm \"\$TEMP_ROOT_CRON\"
-              echo 'VPN mount monitor cron job configured (runs every 5 minutes as root)'
-              
-              # Cron job para main.py (executa a cada hora no crontab do usuário)
+
               MAIN_CRON='0 * * * * cd /opt/hedge-vpn-sync && docker compose run --rm vpn-sync python main.py >> /var/log/vpn-sync-cron.log 2>&1'
-              
+
               TEMP_USER_CRON=\$(mktemp)
               crontab -l 2>/dev/null | grep -v 'vpn-sync.*main.py' > \"\$TEMP_USER_CRON\" || true
               echo \"\$MAIN_CRON\" >> \"\$TEMP_USER_CRON\"
               crontab \"\$TEMP_USER_CRON\"
               rm \"\$TEMP_USER_CRON\"
-              echo 'Main sync cron job configured (runs every hour)'
-              
-              echo 'All cron jobs configured successfully!'
-              echo 'Verifying cron jobs...'
-              echo 'Root crontab (vpn_mount.sh):'
-              sudo crontab -l | grep 'vpn_mount' || echo '  (none found)'
-              echo 'User crontab (main.py):'
-              crontab -l | grep 'vpn-sync.*main.py' || echo '  (none found)'
             "
 
