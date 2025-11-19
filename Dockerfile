@@ -28,5 +28,6 @@ COPY . .
 RUN chmod +x main.py && \
     chmod +x scripts/*.sh 2>/dev/null || true
 
-CMD ["sleep", "infinity"]
+# Default command
+CMD ["python", "main.py"]
 

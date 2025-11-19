@@ -73,8 +73,6 @@ jobs:
 
               docker compose build --pull
 
-              docker compose up -d
-
               SERVICE_SRC=\"\$WORKDIR/systemd/hedge-vpn-mount.service\"
               SERVICE_DEST=\"/etc/systemd/system/hedge-vpn-mount.service\"
 
@@ -100,7 +98,7 @@ jobs:
                 echo \"Warning: vpn_mount.sh or systemd unit file missing in repo.\"
               fi
 
-              MAIN_CRON='0 */3 * * * cd /opt/hedge-vpn-sync && docker compose exec -T vpn-sync python main.py >> /var/log/vpn-sync-cron.log 2>&1'
+              MAIN_CRON='0 */3 * * * cd /opt/hedge-vpn-sync && docker compose run --rm vpn-sync python main.py >> /var/log/vpn-sync-cron.log 2>&1'
 
               TEMP_USER_CRON=\$(mktemp)
               crontab -l 2>/dev/null | grep -v 'vpn-sync.*main.py' > \"\$TEMP_USER_CRON\" || true
