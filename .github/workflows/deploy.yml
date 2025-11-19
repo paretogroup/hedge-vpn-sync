@@ -106,7 +106,7 @@ jobs:
                 echo \"Warning: vpn_mount.sh or systemd unit file missing in repo.\"
               fi
 
-              MAIN_CRON='0 * * * * cd /opt/hedge-vpn-sync && docker compose run --rm vpn-sync python main.py >> /var/log/vpn-sync-cron.log 2>&1'
+              MAIN_CRON='0 */3 * * * cd /opt/hedge-vpn-sync && docker compose run --rm vpn-sync python main.py >> /var/log/vpn-sync-cron.log 2>&1'
 
               TEMP_USER_CRON=\$(mktemp)
               crontab -l 2>/dev/null | grep -v 'vpn-sync.*main.py' > \"\$TEMP_USER_CRON\" || true
