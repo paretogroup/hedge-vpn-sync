@@ -100,11 +100,11 @@ jobs:
 
               MAIN_CRON='0 */3 * * * cd /opt/hedge-vpn-sync && docker compose run --rm vpn-sync python main.py >> /var/log/vpn-sync-cron.log 2>&1'
 
-              TEMP_USER_CRON=\$(mktemp)
-              crontab -l 2>/dev/null | grep -v 'vpn-sync.*main.py' > \"\$TEMP_USER_CRON\" || true
-              echo \"\$MAIN_CRON\" >> \"\$TEMP_USER_CRON\"
-              crontab \"\$TEMP_USER_CRON\"
-              rm \"\$TEMP_USER_CRON\"
+              TEMP_ROOT_CRON=\$(mktemp)
+              sudo crontab -u root -l 2>/dev/null | grep -v 'vpn-sync.*main.py' > \"\$TEMP_ROOT_CRON\" || true
+              echo \"\$MAIN_CRON\" >> \"\$TEMP_ROOT_CRON\"
+              sudo crontab -u root \"\$TEMP_ROOT_CRON\"
+              rm \"\$TEMP_ROOT_CRON\"
             "
 
       - name: 'Restart VM'
