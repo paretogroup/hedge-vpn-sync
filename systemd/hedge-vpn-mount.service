@@ -1,0 +1,19 @@
+[Unit]
+Description=Hedge VPN tunnel and CIFS mount
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/hedge-vpn-sync
+Environment=LOG_FILE=/var/log/vpn_mount.log
+ExecStart=/bin/bash /opt/hedge-vpn-sync/scripts/vpn_mount.sh
+Restart=always
+RestartSec=15
+KillSignal=SIGINT
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
+

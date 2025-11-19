@@ -1,11 +1,20 @@
 #!/bin/bash
 
+set -euo pipefail
+
+LOG_FILE=${LOG_FILE:-/var/log/vpn_mount.log}
+mkdir -p "$(dirname "$LOG_FILE")"
+exec > >(tee -a "$LOG_FILE")
+exec 2>&1
+
 VPN_CONFIG="/etc/openvpn/client/client.conf"
 SMB_CREDS="/root/.smbcredentials"
-VPN_PID="/var/run/openvpn_watchguard.pid"
+VPN_PID="/var/run/wg_openvpn.pid"
 REMOTE_SERVER="10.5.0.8"
 REMOTE_SHARE="//$REMOTE_SERVER/dados/pareto"
 MOUNT_POINT="/mnt/pareto"
+MAX_PING_FAILURES=${MAX_PING_FAILURES:-5}
+PING_INTERVAL=${PING_INTERVAL:-5}
 
 # Detect sudo
 if [ "$EUID" -eq 0 ]; then
@@ -14,9 +23,44 @@ else
     SUDO="sudo"
 fi
 
+require_command() {
+    if ! command -v "$1" >/dev/null 2>&1; then
+        echo "Critical Error: required command '$1' not found."
+        exit 1
+    fi
+}
+
+for bin in ip openvpn mount ping; do
+    require_command "$bin"
+done
+
 # Store original gateway (for GCP SSH protection)
 ORIG_GW=$(ip -4 route show default | head -n1 | awk '{print $3}')
 ORIG_DEV=$(ip -4 route show default | head -n1 | awk '{print $5}')
+
+stop_openvpn() {
+    if $SUDO test -f "$VPN_PID"; then
+        PID=$($SUDO cat "$VPN_PID")
+        if [ -n "$PID" ] && $SUDO kill -0 "$PID" 2>/dev/null; then
+            echo "Stopping OpenVPN (PID: $PID)..."
+            $SUDO kill "$PID" 2>/dev/null || true
+            sleep 1
+        fi
+        $SUDO rm -f "$VPN_PID"
+    fi
+
+    if $SUDO pgrep -f "openvpn --config $VPN_CONFIG" >/dev/null 2>&1; then
+        echo "Stopping stray OpenVPN processes..."
+        $SUDO pkill -f "openvpn --config $VPN_CONFIG" || true
+    fi
+}
+
+cleanup_mount() {
+    if mountpoint -q "$MOUNT_POINT"; then
+        echo "Unmounting $MOUNT_POINT..."
+        $SUDO umount -l "$MOUNT_POINT" 2>/dev/null || true
+    fi
+}
 
 cleanup() {
     echo ""
@@ -26,19 +70,8 @@ cleanup() {
     echo "Restoring original routing..."
     $SUDO ip route replace default via "$ORIG_GW" dev "$ORIG_DEV" || true
 
-    if mountpoint -q "$MOUNT_POINT"; then
-        echo "Unmounting $MOUNT_POINT..."
-        $SUDO umount "$MOUNT_POINT" 2>/dev/null
-    fi
-
-    if $SUDO test -f "$VPN_PID"; then
-        PID=$($SUDO cat "$VPN_PID")
-        if [ -n "$PID" ]; then
-            echo "Stopping OpenVPN..."
-            $SUDO kill "$PID" 2>/dev/null
-        fi
-        $SUDO rm -f "$VPN_PID"
-    fi
+    cleanup_mount
+    stop_openvpn
 
     echo "Connections closed. VPN off."
     exit
@@ -57,10 +90,14 @@ if ! $SUDO test -f "$SMB_CREDS"; then
     exit 1
 fi
 
+echo "--- Resetting previous state ---"
+cleanup_mount
+stop_openvpn
+
 echo "--- Preparing safe routing for GCP ---"
 
 # Keep metadata server out of VPN (VERY IMPORTANT)
-$SUDO ip route add 169.254.169.254 via "$ORIG_GW" dev "$ORIG_DEV" 2>/dev/null
+$SUDO ip route add 169.254.169.254 via "$ORIG_GW" dev "$ORIG_DEV" 2>/dev/null || true
 
 echo "--- Connecting VPN ---"
 
@@ -105,10 +142,18 @@ fi
 echo "System ready. Press Ctrl+C to disconnect."
 
 # Keep alive loop
+echo "--- Entering keep-alive loop ---"
+PING_FAILURES=0
 while true; do
-    if ! ping -c 1 -W 1 "$REMOTE_SERVER" &>/dev/null; then
-        echo "VPN lost. Exiting."
-        cleanup
+    if ping -c 1 -W 1 "$REMOTE_SERVER" &>/dev/null; then
+        PING_FAILURES=0
+    else
+        PING_FAILURES=$((PING_FAILURES + 1))
+        echo "Ping failure $PING_FAILURES/$MAX_PING_FAILURES"
+        if [ "$PING_FAILURES" -ge "$MAX_PING_FAILURES" ]; then
+            echo "VPN lost after repeated ping failures. Exiting."
+            cleanup
+        fi
     fi
-    sleep 5
+    sleep "$PING_INTERVAL"
 done

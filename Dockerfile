@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     g++ \
     openvpn \
     cifs-utils \
+    iproute2 \
     iputils-ping \
     net-tools \
     sudo \

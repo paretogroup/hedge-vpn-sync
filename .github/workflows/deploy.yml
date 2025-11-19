@@ -81,26 +81,30 @@ jobs:
                 exit 1
               fi
 
-              if [ -f \"\$WORKDIR/scripts/vpn_mount.sh\" ]; then
+              SERVICE_SRC=\"\$WORKDIR/systemd/hedge-vpn-mount.service\"
+              SERVICE_DEST=\"/etc/systemd/system/hedge-vpn-mount.service\"
+
+              if [ -f \"\$WORKDIR/scripts/vpn_mount.sh\" ] && [ -f \"\$SERVICE_SRC\" ]; then
                 chmod +x \"\$WORKDIR/scripts/vpn_mount.sh\"
-                if ! pgrep -f 'vpn_mount.sh' > /dev/null; then
-                  nohup sudo \"\$WORKDIR/scripts/vpn_mount.sh\" > /var/log/vpn_mount.log 2>&1 &
-                  sleep 5
-                  if ! pgrep -f 'vpn_mount.sh' > /dev/null; then
-                    echo 'Warning: VPN mount script may have failed. Check /var/log/vpn_mount.log'
+                sudo install -m 0644 \"\$SERVICE_SRC\" \"\$SERVICE_DEST\"
+                sudo systemctl daemon-reload
+                sudo systemctl enable hedge-vpn-mount.service
+                sudo systemctl restart hedge-vpn-mount.service
+
+                echo \"Waiting for VPN mount service...\"
+                for attempt in {1..12}; do
+                  if sudo mountpoint -q /mnt/pareto; then
+                    echo \"VPN mount is active.\"
+                    break
                   fi
-                fi
+                  sleep 5
+                  if [ \"\$attempt\" -eq 12 ]; then
+                    echo \"Warning: VPN mount not ready after 60s. Check journalctl -u hedge-vpn-mount.service.\"
+                  fi
+                done
               else
-                echo \"Warning: vpn_mount.sh not found in \$WORKDIR/scripts/\"
+                echo \"Warning: vpn_mount.sh or systemd unit file missing in repo.\"
               fi
-
-              VPN_MOUNT_CRON='*/5 * * * * if ! pgrep -f vpn_mount.sh > /dev/null; then nohup /opt/hedge-vpn-sync/scripts/vpn_mount.sh > /var/log/vpn_mount.log 2>&1 & fi'
-
-              TEMP_ROOT_CRON=\$(mktemp)
-              sudo crontab -l 2>/dev/null | grep -v 'vpn_mount.sh' > \"\$TEMP_ROOT_CRON\" || true
-              echo \"\$VPN_MOUNT_CRON\" >> \"\$TEMP_ROOT_CRON\"
-              sudo crontab \"\$TEMP_ROOT_CRON\"
-              rm \"\$TEMP_ROOT_CRON\"
 
               MAIN_CRON='0 * * * * cd /opt/hedge-vpn-sync && docker compose run --rm vpn-sync python main.py >> /var/log/vpn-sync-cron.log 2>&1'
 
