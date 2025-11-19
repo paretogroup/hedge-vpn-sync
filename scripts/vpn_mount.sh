@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-LOG_FILE=${LOG_FILE:-/var/log/vpn-mount.log}
+LOG_FILE=${LOG_FILE:-/var/log/vpn_mount.log}
 mkdir -p "$(dirname "$LOG_FILE")"
 exec > >(tee -a "$LOG_FILE")
 exec 2>&1
