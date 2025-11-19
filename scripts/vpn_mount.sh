@@ -10,7 +10,7 @@ exec 2>&1
 VPN_CONFIG="/etc/openvpn/client/client.conf"
 SMB_CREDS="/root/.smbcredentials"
 VPN_PID="/var/run/wg_openvpn.pid"
-REMOTE_SERVER="10.5.0.8"
+REMOTE_SERVER="192.168.113.1"
 REMOTE_SHARE="//$REMOTE_SERVER/dados/pareto"
 MOUNT_POINT="/mnt/pareto"
 MAX_PING_FAILURES=${MAX_PING_FAILURES:-5}
