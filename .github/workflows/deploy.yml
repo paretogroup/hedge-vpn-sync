@@ -67,6 +67,10 @@ jobs:
               fi
 
               docker compose down --timeout 30 || true
+              docker builder prune -af || true
+              docker image prune -af || true
+              docker volume prune -f || true
+
               docker compose build --pull
               docker compose up -d
 
