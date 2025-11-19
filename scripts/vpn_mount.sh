@@ -58,7 +58,13 @@ stop_openvpn() {
 cleanup_mount() {
     if mountpoint -q "$MOUNT_POINT"; then
         echo "Unmounting $MOUNT_POINT..."
-        $SUDO umount -l "$MOUNT_POINT" 2>/dev/null || true
+        $SUDO umount -f -l "$MOUNT_POINT" 2>/dev/null || true
+        for i in {1..10}; do
+            if ! mountpoint -q "$MOUNT_POINT"; then
+                break
+            fi
+            sleep 1
+        done
     fi
 }
 
@@ -135,8 +141,16 @@ OPTS="credentials=$SMB_CREDS,iocharset=utf8,file_mode=0777,dir_mode=0777,uid=$CU
 if $SUDO mount -t cifs "$REMOTE_SHARE" "$MOUNT_POINT" -o "$OPTS"; then
     echo "Mounted successfully."
 else
-    echo "Failed to mount."
-    cleanup
+    # Se o mount falhar, mas o compartilhamento já estiver montado corretamente
+    # em $MOUNT_POINT (situação típica de corrida durante deploy/restart),
+    # consideramos como sucesso para não derrubar o serviço.
+    if mount | grep -q "^$REMOTE_SHARE on $MOUNT_POINT "; then
+        echo "Share already mounted on $MOUNT_POINT. Reusing existing mount."
+        echo "Mounted successfully."
+    else
+        echo "Failed to mount."
+        cleanup
+    fi
 fi
 
 echo "System ready. Press Ctrl+C to disconnect."
