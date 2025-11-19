@@ -107,3 +107,9 @@ jobs:
               rm \"\$TEMP_USER_CRON\"
             "
 
+      - name: 'Restart VM'
+        run: |
+          gcloud compute instances reset ${{ env.VM_NAME }} \
+            --zone=${{ env.VM_ZONE }} \
+            --project=${{ env.PROJECT_ID }}
+
