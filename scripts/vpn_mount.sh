@@ -93,7 +93,7 @@ $SUDO mkdir -p "$MOUNT_POINT"
 CURRENT_UID=$(id -u)
 CURRENT_GID=$(id -g)
 
-OPTS="credentials=$SMB_CREDS,iocharset=utf8,file_mode=0777,dir_mode=0777,uid=$CURR>
+OPTS="credentials=$SMB_CREDS,iocharset=utf8,file_mode=0777,dir_mode=0777,uid=$CURRENT_UID,gid=$CURRENT_GID,vers=3.0,noserverino"
 
 if $SUDO mount -t cifs "$REMOTE_SHARE" "$MOUNT_POINT" -o "$OPTS"; then
     echo "Mounted successfully."
