@@ -72,14 +72,6 @@ jobs:
               docker volume prune -f || true
 
               docker compose build --pull
-              docker compose up -d
-
-              sleep 10
-              if ! docker compose ps | grep -q 'Up'; then
-                docker compose ps
-                docker compose logs --tail=50
-                exit 1
-              fi
 
               SERVICE_SRC=\"\$WORKDIR/systemd/hedge-vpn-mount.service\"
               SERVICE_DEST=\"/etc/systemd/system/hedge-vpn-mount.service\"
