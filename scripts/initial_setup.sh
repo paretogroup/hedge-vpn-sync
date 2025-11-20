@@ -1,4 +1,5 @@
 #!/bin/bash
+
 set -e
 
 echo "=========================================="
@@ -6,13 +7,11 @@ echo "Hedge VPN Sync - Initial Setup Script"
 echo "=========================================="
 echo ""
 
-# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Function to print messages
 info() {
     echo -e "${GREEN}[INFO]${NC} $1"
 }
@@ -25,7 +24,6 @@ error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-# Check if running as root or with sudo
 if [ "$EUID" -ne 0 ]; then 
     error "Please run this script with sudo"
     exit 1
@@ -46,16 +44,13 @@ apt-get install -y \
     > /dev/null
 
 info "Installing Docker..."
-# Remove old versions if they exist
 apt-get remove -y docker docker-engine docker.io containerd runc 2>/dev/null || true
 
-# Remove old Docker repository configuration if it exists
 if [ -f /etc/apt/sources.list.d/docker.list ]; then
     info "Removing old Docker repository configuration..."
     rm -f /etc/apt/sources.list.d/docker.list
 fi
 
-# Detect distribution (Ubuntu or Debian)
 if [ -f /etc/os-release ]; then
     . /etc/os-release
     DISTRO_ID="$ID"
@@ -65,7 +60,6 @@ else
     exit 1
 fi
 
-# Validate distribution
 if [ "$DISTRO_ID" != "ubuntu" ] && [ "$DISTRO_ID" != "debian" ]; then
     error "Unsupported distribution: $DISTRO_ID. This script supports Ubuntu and Debian only."
     exit 1
@@ -73,7 +67,6 @@ fi
 
 info "Detected distribution: $DISTRO_ID $DISTRO_CODENAME"
 
-# Add Docker repository
 install -m 0755 -d /etc/apt/keyrings
 if [ ! -f /etc/apt/keyrings/docker.gpg ]; then
     curl -fsSL https://download.docker.com/linux/$DISTRO_ID/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
@@ -104,7 +97,6 @@ else
     exit 1
 fi
 
-# Add current user to docker group (if not root)
 if [ -n "$SUDO_USER" ]; then
     info "Adding user $SUDO_USER to docker group..."
     usermod -aG docker "$SUDO_USER"
@@ -112,14 +104,12 @@ if [ -n "$SUDO_USER" ]; then
     warn "The user needs to logout and login again to use Docker without sudo"
 fi
 
-# Create necessary directories
 info "Creating necessary directories..."
 mkdir -p /opt/hedge-vpn-sync
 mkdir -p /mnt/pareto
 mkdir -p /var/log
 mkdir -p /etc/openvpn/client
 
-# Create directory for logs
 touch /var/log/vpn_mount.log
 touch /var/log/vpn-sync-cron.log
 chmod 666 /var/log/vpn_mount.log
@@ -128,7 +118,6 @@ chmod 666 /var/log/vpn-sync-cron.log
 info "Configuring permissions..."
 chown -R "$SUDO_USER:$SUDO_USER" /opt/hedge-vpn-sync 2>/dev/null || true
 
-# Check if the VPN configuration files exist
 info "Checking VPN configuration files..."
 VPN_CONFIG="/etc/openvpn/client/client.conf"
 SMB_CREDS="/root/.smbcredentials"
@@ -146,7 +135,6 @@ if [ ! -f "$SMB_CREDS" ]; then
     warn "  password=your_password"
 fi
 
-# Check if the repository has already been cloned
 if [ -d "/opt/hedge-vpn-sync/.git" ]; then
     info "Repository already exists in /opt/hedge-vpn-sync"
 else
