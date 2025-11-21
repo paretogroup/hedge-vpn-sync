@@ -136,20 +136,20 @@ class VPNSynchronizer:
             # Identify differences between VPN and BigQuery
             vpn_paths = set(vpn_data.keys())
             
-            # (A) Files in the VPN that are not in BigQuery
+            # (1) Files in the VPN that are not in BigQuery
             to_add = vpn_paths - bq_paths
             
-            # (B) Files in BigQuery that are not in the VPN
+            # (2) Files in BigQuery that are not in the VPN
             to_delete = bq_paths - vpn_paths
             
-            # (C) Files in both but with different timestamps (comparação exata)
+            # (3) Files in both but with different timestamps (comparação exata)
             common_paths = vpn_paths & bq_paths
             to_update = [
                 path for path in common_paths
                 if vpn_data[path] != bq_data[path]
             ]
             
-            # (D) Reconciliation: Files in GCS but not in BQ
+            # (4) Reconciliation: Files in GCS but not in BQ
             # - If in VPN: add to BQ (will be handled by to_add)
             # - If not in VPN: delete from GCS (orphaned)
             gcs_orphans = gcs_only - vpn_paths  # In GCS but not in VPN or BQ
@@ -162,7 +162,7 @@ class VPNSynchronizer:
             if gcs_in_vpn_not_bq:
                 logger.info(f"Found {len(gcs_in_vpn_not_bq)} files in GCS and VPN but not in BQ (will be added to BQ)")
             
-            # (E) Reconciliation: Files in BQ but not in GCS
+            # (5) Reconciliation: Files in BQ but not in GCS
             # - If in VPN: re-upload to GCS (add to to_update)
             # - If not in VPN: delete from BQ (already in to_delete)
             bq_missing_gcs = bq_only & vpn_paths  # In BQ and VPN but not in GCS
@@ -206,25 +206,24 @@ class VPNSynchronizer:
                     "files_updated": 0,
                     "message": "No changes necessary"
                 }
-            
+
             # Execute operations in optimized order for consistency
-            
-            # (B) Delete files first (cleanup before adding/updating)
-            # This ensures we don't have orphaned data
+                        
+            # (1) Delete files first (cleanup before adding/updating)
             if len(to_delete) > 0:
                 logger.info(f"Deleting {len(to_delete)} files...")
                 delete_success = self._delete_files(to_delete)
                 if not delete_success:
                     logger.warning("Some deletions failed, but continuing with other operations...")
             
-            # (A) Add new files
+            # (2) Add new files
             if len(to_add) > 0:
                 logger.info(f"Adding {len(to_add)} files...")
                 add_success = self._add_files(to_add, vpn_data, vpn_file_map)
                 if not add_success:
                     logger.warning("Some additions failed, but continuing with other operations...")
             
-            # (C) Update files with different dates
+            # (3) Update files with different dates
             if len(to_update) > 0:
                 logger.info(f"Updating {len(to_update)} files...")
                 update_success = self._update_files(to_update, vpn_data, vpn_file_map)
@@ -256,7 +255,8 @@ class VPNSynchronizer:
                 try:
                     success = not error_occurred
                     self.bq_manager.log_sync(
-                        self.dataset_id, self.log_table_id, sync_start_time,
+                        self.dataset_id, self.log_table_id,
+                        sync_start_time, datetime.now(),
                         files_added, files_deleted, files_updated,
                         success=success, error_message=error_message
                     )
@@ -340,7 +340,6 @@ class VPNSynchronizer:
                 return False
         except Exception as e:
             logger.error(f"Error inserting files into BigQuery: {e}")
-            # Files are in GCS but not in BQ - this will be reconciled in next sync
             return False
     
     def _delete_files(self, to_delete: list) -> bool:
@@ -353,7 +352,7 @@ class VPNSynchronizer:
         if not to_delete:
             return True
         
-        delete_list = list(set(to_delete))  # Remove duplicates
+        delete_list = list(set(to_delete))
         
         # Delete from BigQuery first (safer - metadata before data)
         try:
@@ -492,4 +491,3 @@ class VPNSynchronizer:
                 logger.info("✓ Final consistency check passed: VPN, GCS, and BigQuery are synchronized")
         except Exception as e:
             logger.warning(f"Could not perform final consistency check: {e}")
-            # Don't fail the sync if verification fails

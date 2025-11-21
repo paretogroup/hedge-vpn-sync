@@ -16,7 +16,6 @@ MOUNT_POINT="/mnt/pareto"
 MAX_PING_FAILURES=${MAX_PING_FAILURES:-5}
 PING_INTERVAL=${PING_INTERVAL:-5}
 
-# Detect sudo
 if [ "$EUID" -eq 0 ]; then
     SUDO=""
 else
@@ -34,7 +33,6 @@ for bin in ip openvpn mount ping; do
     require_command "$bin"
 done
 
-# Store original gateway (for GCP SSH protection)
 ORIG_GW=$(ip -4 route show default | head -n1 | awk '{print $3}')
 ORIG_DEV=$(ip -4 route show default | head -n1 | awk '{print $5}')
 
@@ -72,7 +70,6 @@ cleanup() {
     echo ""
     echo "--- Stopping ---"
 
-    # Restore original default route
     echo "Restoring original routing..."
     $SUDO ip route replace default via "$ORIG_GW" dev "$ORIG_DEV" || true
 
@@ -85,7 +82,6 @@ cleanup() {
 
 trap cleanup SIGINT SIGTERM
 
-# Validation
 if ! $SUDO test -f "$VPN_CONFIG"; then
     echo "Critical Error: VPN config not found."
     exit 1
@@ -102,7 +98,6 @@ stop_openvpn
 
 echo "--- Preparing safe routing for GCP ---"
 
-# Keep metadata server out of VPN (VERY IMPORTANT)
 $SUDO ip route add 169.254.169.254 via "$ORIG_GW" dev "$ORIG_DEV" 2>/dev/null || true
 
 echo "--- Connecting VPN ---"
@@ -141,9 +136,6 @@ OPTS="credentials=$SMB_CREDS,iocharset=utf8,file_mode=0777,dir_mode=0777,uid=$CU
 if $SUDO mount -t cifs "$REMOTE_SHARE" "$MOUNT_POINT" -o "$OPTS"; then
     echo "Mounted successfully."
 else
-    # Se o mount falhar, mas o compartilhamento já estiver montado corretamente
-    # em $MOUNT_POINT (situação típica de corrida durante deploy/restart),
-    # consideramos como sucesso para não derrubar o serviço.
     if mount | grep -q "^$REMOTE_SHARE on $MOUNT_POINT "; then
         echo "Share already mounted on $MOUNT_POINT. Reusing existing mount."
         echo "Mounted successfully."
@@ -155,7 +147,6 @@ fi
 
 echo "System ready. Press Ctrl+C to disconnect."
 
-# Keep alive loop
 echo "--- Entering keep-alive loop ---"
 PING_FAILURES=0
 while true; do

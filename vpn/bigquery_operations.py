@@ -51,7 +51,8 @@ class BigQueryManager:
             List of SchemaFields
         """
         return [
-            bigquery.SchemaField("sync_date", "DATETIME", mode="REQUIRED"),
+            bigquery.SchemaField("sync_start_time", "DATETIME", mode="REQUIRED"),
+            bigquery.SchemaField("sync_end_time", "DATETIME", mode="REQUIRED"),
             bigquery.SchemaField("files_added", "INTEGER", mode="REQUIRED"),
             bigquery.SchemaField("files_deleted", "INTEGER", mode="REQUIRED"),
             bigquery.SchemaField("files_updated", "INTEGER", mode="REQUIRED"),
@@ -320,7 +321,8 @@ class BigQueryManager:
         self,
         dataset_id: str,
         log_table_id: str,
-        sync_date: datetime,
+        sync_start_time: datetime,
+        sync_end_time: datetime,
         files_added: int,
         files_deleted: int,
         files_updated: int,
@@ -333,7 +335,8 @@ class BigQueryManager:
         Args:
             dataset_id: ID of the dataset in BigQuery
             log_table_id: ID of the log table
-            sync_date: Date/time of the sync
+            sync_start_time: Date/time when the sync started
+            sync_end_time: Date/time when the sync finished
             files_added: Number of files added
             files_deleted: Number of files deleted
             files_updated: Number of files updated
@@ -353,7 +356,8 @@ class BigQueryManager:
         
         # Prepare data for insertion
         log_data = {
-            "sync_date": sync_date,
+            "sync_start_time": sync_start_time,
+            "sync_end_time": sync_end_time,
             "files_added": files_added,
             "files_deleted": files_deleted,
             "files_updated": files_updated,
