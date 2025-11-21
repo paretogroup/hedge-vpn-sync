@@ -98,18 +98,12 @@ jobs:
                 echo \"Warning: vpn_mount.sh or systemd unit file missing in repo.\"
               fi
 
-              MAIN_CRON='0 */3 * * * cd /opt/hedge-vpn-sync && docker compose run --rm vpn-sync python main.py >> /var/log/vpn-sync-cron.log 2>&1'
-
-              TEMP_RUNNER_CRON=\$(mktemp)
-              crontab -l 2>/dev/null | grep -v 'vpn-sync.*main.py' > \"\$TEMP_RUNNER_CRON\" || true
-              echo \"\$MAIN_CRON\" >> \"\$TEMP_RUNNER_CRON\"
-              crontab \"\$TEMP_RUNNER_CRON\"
-              rm \"\$TEMP_RUNNER_CRON\"
-
+              MAIN_CRON='0 */3 * * * cd /opt/hedge-vpn-sync && /usr/bin/docker compose run --rm vpn-sync python main.py >> /var/log/vpn-sync-cron.log 2>&1'
               VPN_CRON='*/5 * * * * if ! pgrep -f vpn_mount.sh > /dev/null; then nohup /opt/hedge-vpn-sync/scripts/vpn_mount.sh > /var/log/vpn_mount.log 2>&1 & fi'
 
               TEMP_ROOT_CRON=\$(mktemp)
               sudo crontab -u root -l 2>/dev/null | grep -v 'vpn-sync.*main.py' | grep -v 'vpn_mount.sh' > \"\$TEMP_ROOT_CRON\" || true
+              echo \"\$MAIN_CRON\" >> \"\$TEMP_ROOT_CRON\"
               echo \"\$VPN_CRON\" >> \"\$TEMP_ROOT_CRON\"
               sudo crontab -u root \"\$TEMP_ROOT_CRON\"
               rm \"\$TEMP_ROOT_CRON\"
