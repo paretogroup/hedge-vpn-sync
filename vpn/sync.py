@@ -178,9 +178,9 @@ class VPNSynchronizer:
             logger.info("=" * 60)
             logger.info("SYNCHRONIZATION SUMMARY")
             logger.info("=" * 60)
-            logger.info(f"(A) Files to ADD: {len(to_add)}")
-            logger.info(f"(B) Files to DELETE: {len(to_delete)}")
-            logger.info(f"(C) Files to UPDATE: {len(to_update)}")
+            logger.info(f"Files to ADD: {len(to_add)}")
+            logger.info(f"Files to DELETE: {len(to_delete)}")
+            logger.info(f"Files to UPDATE: {len(to_update)}")
             logger.info("=" * 60)
             
             files_added = len(to_add)
@@ -340,6 +340,7 @@ class VPNSynchronizer:
                 return False
         except Exception as e:
             logger.error(f"Error inserting files into BigQuery: {e}")
+            # Files are in GCS but not in BQ - this will be reconciled in next sync
             return False
     
     def _delete_files(self, to_delete: list) -> bool:
@@ -491,3 +492,4 @@ class VPNSynchronizer:
                 logger.info("✓ Final consistency check passed: VPN, GCS, and BigQuery are synchronized")
         except Exception as e:
             logger.warning(f"Could not perform final consistency check: {e}")
+            # Don't fail the sync if verification fails
