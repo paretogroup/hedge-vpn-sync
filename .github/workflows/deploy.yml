@@ -66,14 +66,6 @@ jobs:
                 exit 1
               fi
 
-              docker compose down --timeout 30 || true
-              docker builder prune -af || true
-              docker image prune -af || true
-              docker volume prune -f || true
-
-              docker compose build --pull
-              docker compose up -d --remove-orphans
-
               SERVICE_SRC=\"\$WORKDIR/systemd/hedge-vpn-mount.service\"
               SERVICE_DEST=\"/etc/systemd/system/hedge-vpn-mount.service\"
 
@@ -85,19 +77,33 @@ jobs:
                 sudo systemctl restart hedge-vpn-mount.service
 
                 echo \"Waiting for VPN mount service...\"
+                MOUNT_READY=0
                 for attempt in {1..12}; do
                   if sudo mountpoint -q /mnt/pareto; then
                     echo \"VPN mount is active.\"
+                    sudo mount --make-shared /mnt/pareto 2>/dev/null || true
+                    MOUNT_READY=1
                     break
                   fi
                   sleep 5
-                  if [ \"\$attempt\" -eq 12 ]; then
-                    echo \"Warning: VPN mount not ready after 60s. Check journalctl -u hedge-vpn-mount.service.\"
-                  fi
                 done
+
+                if [ \"\$MOUNT_READY\" -ne 1 ]; then
+                  echo \"ERROR: VPN mount not ready after 60s. Aborting deployment.\"
+                  echo \"Check 'journalctl -u hedge-vpn-mount.service' for details.\"
+                  exit 1
+                fi
               else
                 echo \"Warning: vpn_mount.sh or systemd unit file missing in repo.\"
               fi
+
+              docker compose down --timeout 30 || true
+              docker builder prune -af || true
+              docker image prune -af || true
+              docker volume prune -f || true
+
+              docker compose build --pull
+              docker compose up -d --remove-orphans
 
               MAIN_CRON='0 */3 * * * cd /opt/hedge-vpn-sync && /usr/bin/docker compose exec -T vpn-sync python main.py >> /var/log/vpn-sync-cron.log 2>&1'
               VPN_CRON='*/5 * * * * if ! pgrep -f vpn_mount.sh > /dev/null; then nohup /opt/hedge-vpn-sync/scripts/vpn_mount.sh > /var/log/vpn_mount.log 2>&1 & fi'

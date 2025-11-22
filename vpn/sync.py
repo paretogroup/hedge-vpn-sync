@@ -84,12 +84,14 @@ class VPNSynchronizer:
                 logger.warning(f"⚠ No files found in {self.base_path}!")
                 logger.warning("Operation interrupted.")
                 logger.warning("=" * 60)
+                error_occurred = True
+                error_message = "No files found in the mount point"
                 return {
                     "success": False,
                     "files_added": 0,
                     "files_deleted": 0,
                     "files_updated": 0,
-                    "error_message": "No files found in the mount point"
+                    "error_message": error_message
                 }
             
             # Prepare data from the VPN
