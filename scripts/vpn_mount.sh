@@ -13,7 +13,7 @@ VPN_PID="/var/run/wg_openvpn.pid"
 REMOTE_SERVER="10.5.0.8"
 REMOTE_SHARE="//$REMOTE_SERVER/dados/pareto"
 MOUNT_POINT="/mnt/pareto"
-MAX_PING_FAILURES=${MAX_PING_FAILURES:-5}
+MAX_PING_FAILURES=${MAX_PING_FAILURES:-10}
 PING_INTERVAL=${PING_INTERVAL:-5}
 
 if [ "$EUID" -eq 0 ]; then
@@ -135,6 +135,11 @@ OPTS="credentials=$SMB_CREDS,iocharset=utf8,file_mode=0777,dir_mode=0777,uid=$CU
 
 if $SUDO mount -t cifs "$REMOTE_SHARE" "$MOUNT_POINT" -o "$OPTS"; then
     echo "Mounted successfully."
+    if $SUDO mount --make-shared "$MOUNT_POINT" 2>/dev/null; then
+        echo "Mount propagation set to shared."
+    else
+        echo "Warning: could not set mount propagation to shared (continuing)."
+    fi
 else
     if mount | grep -q "^$REMOTE_SHARE on $MOUNT_POINT "; then
         echo "Share already mounted on $MOUNT_POINT. Reusing existing mount."

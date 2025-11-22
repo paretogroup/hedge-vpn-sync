@@ -7,7 +7,12 @@ services:
     image: hedge-vpn-sync:latest
     privileged: true
     volumes:
-      - ${VPN_BASE_PATH:-/mnt/pareto}:/mnt/pareto:ro
+      - type: bind
+        source: ${VPN_BASE_PATH:-/mnt/pareto}
+        target: /mnt/pareto
+        read_only: true
+        bind:
+          propagation: rshared
       - ${HOST_OPENVPN_DIR:-/etc/openvpn}:/etc/openvpn:ro
       - ${HOST_SMB_CREDENTIALS_FILE:-/root/.smbcredentials}:/root/.smbcredentials:ro
       - ${HOST_GCP_CREDENTIALS_FILE:-./credentials.json}:/app/credentials.json:ro
