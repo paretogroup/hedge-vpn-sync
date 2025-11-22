@@ -30,6 +30,7 @@ services:
       - UPLOAD_RETRY_DELAY=${UPLOAD_RETRY_DELAY:-1.0}
       
       - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-/app/credentials.json}
+    command: ["sleep", "infinity"]
     restart: unless-stopped
     networks:
       - vpn-sync-network
