@@ -105,13 +105,13 @@ jobs:
               docker compose build --pull
               docker compose up -d --remove-orphans
 
-              MAIN_CRON='0 */3 * * * cd /opt/hedge-vpn-sync && /usr/bin/docker compose exec -T vpn-sync python main.py >> /var/log/vpn-sync-cron.log 2>&1'
-              VPN_CRON='*/5 * * * * if ! pgrep -f vpn_mount.sh > /dev/null; then nohup /opt/hedge-vpn-sync/scripts/vpn_mount.sh > /var/log/vpn_mount.log 2>&1 & fi'
+              VPN_MOUNT_CRON='*/5 * * * * if ! pgrep -f vpn_mount.sh > /dev/null; then nohup /opt/hedge-vpn-sync/scripts/vpn_mount.sh > /var/log/vpn-mount.log 2>&1 & fi'
+              VPN_SYNC_CRON='0 3 * * * cd /opt/hedge-vpn-sync && /usr/bin/docker compose exec -T vpn-sync python main.py >> /var/log/vpn-sync.log 2>&1'
 
               TEMP_ROOT_CRON=\$(mktemp)
               sudo crontab -u root -l 2>/dev/null | grep -v 'vpn-sync.*main.py' | grep -v 'vpn_mount.sh' > \"\$TEMP_ROOT_CRON\" || true
-              echo \"\$MAIN_CRON\" >> \"\$TEMP_ROOT_CRON\"
-              echo \"\$VPN_CRON\" >> \"\$TEMP_ROOT_CRON\"
+              echo \"\$VPN_MOUNT_CRON\" >> \"\$TEMP_ROOT_CRON\"
+              echo \"\$VPN_SYNC_CRON\" >> \"\$TEMP_ROOT_CRON\"
               sudo crontab -u root \"\$TEMP_ROOT_CRON\"
               rm \"\$TEMP_ROOT_CRON\"
             "

@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=/opt/hedge-vpn-sync
-Environment=LOG_FILE=/var/log/vpn_mount.log
+Environment=LOG_FILE=/var/log/vpn-mount.log
 ExecStart=/bin/bash /opt/hedge-vpn-sync/scripts/vpn_mount.sh
 Restart=always
 RestartSec=15

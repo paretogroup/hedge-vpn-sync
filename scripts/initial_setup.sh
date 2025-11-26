@@ -110,10 +110,10 @@ mkdir -p /mnt/pareto
 mkdir -p /var/log
 mkdir -p /etc/openvpn/client
 
-touch /var/log/vpn_mount.log
-touch /var/log/vpn-sync-cron.log
-chmod 666 /var/log/vpn_mount.log
-chmod 666 /var/log/vpn-sync-cron.log
+touch /var/log/vpn-mount.log
+touch /var/log/vpn-sync.log
+chmod 666 /var/log/vpn-mount.log
+chmod 666 /var/log/vpn-sync.log
 
 info "Configuring permissions..."
 chown -R "$SUDO_USER:$SUDO_USER" /opt/hedge-vpn-sync 2>/dev/null || true

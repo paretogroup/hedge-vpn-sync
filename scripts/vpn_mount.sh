@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-LOG_FILE=${LOG_FILE:-/var/log/vpn_mount.log}
+LOG_FILE=${LOG_FILE:-/var/log/vpn-mount.log}
 mkdir -p "$(dirname "$LOG_FILE")"
 exec > >(tee -a "$LOG_FILE")
 exec 2>&1
@@ -109,11 +109,9 @@ echo "Waiting for tunnel..."
 
 CONNECTED=false
 for i in {1..30}; do
-    if ip a | grep -q "tun"; then
-        if ping -c 1 -W 1 "$REMOTE_SERVER" &> /dev/null; then
-            CONNECTED=true
-            break
-        fi
+    if ip a | grep -q "tun" && ping -c 1 -W 1 "$REMOTE_SERVER" &> /dev/null; then
+        CONNECTED=true
+        break
     fi
     sleep 1
 done
